@@ -30,6 +30,7 @@ type OnResult func(*result.Result)
 var (
 	OOB      *oobadapter.OOBAdapter
 	OOBAlive bool
+	OOBMgr   *OOBManager
 )
 
 type Runner struct {

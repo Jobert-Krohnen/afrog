@@ -666,6 +666,12 @@ func (runner *Runner) Execute() {
 		// }
 	}
 
+	if OOBAlive && OOB != nil {
+		OOBMgr = NewOOBManager(runner.ctx, OOB)
+	} else {
+		OOBMgr = nil
+	}
+
 	runner.printOOBStatus(reversePocs)
 
 	// portscan pre-scan: run after OOB status output to ensure ordering

@@ -110,6 +110,25 @@ func (c *Checker) Check(target string, pocItem *poc.Poc) (err error) {
 	}
 	c.VariableMap["request"] = tempRequest
 
+	if OOBAlive && OOB != nil {
+		vdomains := OOB.GetValidationDomain()
+		o := &proto.OOB{
+			Filter:       vdomains.Filter,
+			HTTP:         vdomains.HTTP,
+			DNS:          vdomains.DNS,
+			ProtocolHTTP: "http",
+			ProtocolDNS:  "dns",
+		}
+		c.VariableMap["oob"] = o
+		c.VariableMap["oob_dns"] = o.DNS
+		c.VariableMap["oob_http"] = o.HTTP
+		c.VariableMap["oob_filter"] = o.Filter
+		c.CustomLib.UpdateCompileOption("oob", decls.NewObjectType("proto.OOB"))
+		c.CustomLib.UpdateCompileOption("oob_dns", decls.String)
+		c.CustomLib.UpdateCompileOption("oob_http", decls.String)
+		c.CustomLib.UpdateCompileOption("oob_filter", decls.String)
+	}
+
 	if len(pocItem.Set) > 0 {
 		c.UpdateVariableMap(pocItem.Set)
 	}
@@ -647,13 +666,6 @@ func (c *Checker) UpdateVariableMap(args yaml.MapSlice) {
 		// 新增：根据 YAML 值的实际类型分支处理
 		switch v := item.Value.(type) {
 		case string:
-			// oob() 函数特殊处理
-			if v == "oob()" {
-				c.VariableMap[key] = c.oob()
-				c.CustomLib.UpdateCompileOption(key, decls.NewObjectType("proto.OOB"))
-				continue
-			}
-
 			// 原有字符串路径：走 CEL 求值
 			out, err := c.CustomLib.RunEval(v, c.VariableMap)
 			if err != nil {

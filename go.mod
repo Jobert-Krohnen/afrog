@@ -38,6 +38,8 @@ require (
 	gopkg.in/yaml.v2 v2.4.0
 )
 
+replace github.com/zan8in/oobadapter => ./oobadapter
+
 require (
 	gitee.com/chunanyong/dm v1.8.22 // indirect
 	github.com/Azure/go-ntlmssp v0.1.0 // indirect

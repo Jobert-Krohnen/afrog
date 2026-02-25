@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/zan8in/afrog/v3"
+	"github.com/zan8in/afrog/v3/pkg/poc"
 	"github.com/zan8in/afrog/v3/pkg/result"
 )
 
@@ -105,13 +106,7 @@ func main() {
 	var oobVulnCount, normalVulnCount int
 	scanner.OnResult = func(r *result.Result) {
 		// Check if this is an OOB-related vulnerability / 检查是否为 OOB 相关漏洞
-		isOOBVuln := false
-		for _, rule := range r.PocInfo.Set {
-			if key, ok := rule.Key.(string); ok && (key == "oob" || key == "reverse") {
-				isOOBVuln = true
-				break
-			}
-		}
+		isOOBVuln := r.PocInfo != nil && pocUsesOOB(r.PocInfo)
 
 		if isOOBVuln {
 			oobVulnCount++
@@ -204,4 +199,53 @@ func main() {
 	fmt.Println("4. Verify API tokens and domains / 验证 API 令牌和域名")
 
 	fmt.Println("\nOOB scan completed! / OOB 扫描完成!")
+}
+
+func pocUsesOOB(p *poc.Poc) bool {
+	if p == nil {
+		return false
+	}
+	if containsOOBToken(p.Expression) {
+		return true
+	}
+	for _, it := range p.Set {
+		if s, ok := it.Value.(string); ok && containsOOBToken(s) {
+			return true
+		}
+	}
+	for _, rm := range p.Rules {
+		r := rm.Value
+		if containsOOBToken(r.Expression) {
+			return true
+		}
+		for _, e := range r.Expressions {
+			if containsOOBToken(e) {
+				return true
+			}
+		}
+		req := r.Request
+		if containsOOBToken(req.Path) || containsOOBToken(req.Host) || containsOOBToken(req.Body) || containsOOBToken(req.Raw) || containsOOBToken(req.Data) {
+			return true
+		}
+		for _, hv := range req.Headers {
+			if containsOOBToken(hv) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func containsOOBToken(s string) bool {
+	if s == "" {
+		return false
+	}
+	l := strings.ToLower(s)
+	return strings.Contains(l, "oobcheck(") ||
+		strings.Contains(l, "oobwait(") ||
+		strings.Contains(l, "{{oob") ||
+		strings.Contains(l, "{{ oob") ||
+		strings.Contains(l, "oob_") ||
+		strings.Contains(l, "oob.") ||
+		strings.Contains(l, "oob()")
 }

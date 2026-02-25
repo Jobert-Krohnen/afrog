@@ -895,14 +895,7 @@ func (o *Options) ReversePoCs(allpocs []poc.Poc) ([]poc.Poc, []poc.Poc) {
 	result := []poc.Poc{}
 	other := []poc.Poc{}
 	for _, poc := range allpocs {
-		flag := false
-		for _, item := range poc.Set {
-			key := item.Key.(string)
-			if key == "oob" || key == "reverse" {
-				flag = true
-				break
-			}
-		}
+		flag := pocUsesOOB(poc)
 		if flag {
 			result = append(result, poc)
 		} else {
@@ -910,6 +903,51 @@ func (o *Options) ReversePoCs(allpocs []poc.Poc) ([]poc.Poc, []poc.Poc) {
 		}
 	}
 	return result, other
+}
+
+func pocUsesOOB(p poc.Poc) bool {
+	if containsOOBToken(p.Expression) {
+		return true
+	}
+	for _, it := range p.Set {
+		if s, ok := it.Value.(string); ok && containsOOBToken(s) {
+			return true
+		}
+	}
+	for _, rm := range p.Rules {
+		r := rm.Value
+		if containsOOBToken(r.Expression) {
+			return true
+		}
+		for _, e := range r.Expressions {
+			if containsOOBToken(e) {
+				return true
+			}
+		}
+		req := r.Request
+		if containsOOBToken(req.Path) || containsOOBToken(req.Host) || containsOOBToken(req.Body) || containsOOBToken(req.Raw) || containsOOBToken(req.Data) {
+			return true
+		}
+		for _, hv := range req.Headers {
+			if containsOOBToken(hv) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func containsOOBToken(s string) bool {
+	if s == "" {
+		return false
+	}
+	l := strings.ToLower(s)
+	return strings.Contains(l, "oobcheck(") ||
+		strings.Contains(l, "{{oob") ||
+		strings.Contains(l, "{{ oob") ||
+		strings.Contains(l, "oob_") ||
+		strings.Contains(l, "oob.") ||
+		strings.Contains(l, "oob()")
 }
 
 func (o *Options) FingerprintPoCs(allpocs []poc.Poc) ([]poc.Poc, []poc.Poc) {
