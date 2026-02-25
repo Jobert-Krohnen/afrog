@@ -942,7 +942,7 @@ func containsOOBToken(s string) bool {
 		return false
 	}
 	l := strings.ToLower(s)
-	return strings.Contains(l, "oobcheck(") ||
+	return strings.Contains(l, "oobwait(") ||
 		strings.Contains(l, "{{oob") ||
 		strings.Contains(l, "{{ oob") ||
 		strings.Contains(l, "oob_") ||

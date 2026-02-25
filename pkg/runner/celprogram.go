@@ -725,24 +725,6 @@ var (
 			// 	},
 			// },
 			&functions.Overload{
-				Operator: "oobCheck_oob_string_int",
-				Function: func(values ...ref.Val) ref.Val {
-					oob, ok := values[0].Value().(*proto.OOB)
-					if !ok {
-						return types.ValOrErr(values[0], "unexpected type '%v' passed to toUintString", values[0].Type())
-					}
-					filterType, ok := values[1].(types.String)
-					if !ok {
-						return types.ValOrErr(values[1], "unexpected type '%v' passed to toUintString", values[1].Type())
-					}
-					timeout, ok := values[2].(types.Int)
-					if !ok {
-						return types.ValOrErr(values[2], "unexpected type '%v' passed to toUintString", values[2].Type())
-					}
-					return types.Bool(oobCheck(oob, string(filterType), int64(timeout)))
-				},
-			},
-			&functions.Overload{
 				Operator: "oobWait_oob_string_int",
 				Function: func(values ...ref.Val) ref.Val {
 					oob, ok := values[0].Value().(*proto.OOB)
@@ -757,7 +739,7 @@ var (
 					if !ok {
 						return types.ValOrErr(values[2], "unexpected type '%v' passed to toUintString", values[2].Type())
 					}
-					return types.Bool(oobCheck(oob, string(filterType), int64(timeout)))
+					return types.Bool(oobWait(oob, string(filterType), int64(timeout)))
 				},
 			},
 			// other
@@ -1375,7 +1357,7 @@ func ReadProgramOptions(reg ref.TypeRegistry) []cel.ProgramOption {
 // 	return false
 // }
 
-func oobCheck(oob *proto.OOB, filterType string, timeout int64) bool {
+func oobWait(oob *proto.OOB, filterType string, timeout int64) bool {
 	if oob == nil || OOB == nil || !OOBAlive || OOBMgr == nil || len(oob.Filter) == 0 {
 		return false
 	}

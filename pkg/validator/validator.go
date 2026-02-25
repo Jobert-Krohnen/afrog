@@ -298,8 +298,8 @@ func validateSingleExpression(expression, filePath, content, context string) []V
 		})
 	}
 
-	// 验证oobCheck函数调用
-	if err := validateOobCheck(expr); err != nil {
+	// 验证oobWait函数调用
+	if err := validateOobWait(expr); err != nil {
 		errors = append(errors, ValidationError{
 			File:    filePath,
 			Line:    lineNum,
@@ -408,19 +408,18 @@ func validateResponseStatus(expr string) error {
 	return nil
 }
 
-// validateOobCheck 验证oobCheck函数
-func validateOobCheck(expr string) error {
-	// 首先检查是否有oobCheck调用
-	if !strings.Contains(expr, "oobCheck") && !strings.Contains(expr, "oobWait") {
+// validateOobWait 验证oobWait函数
+func validateOobWait(expr string) error {
+	if !strings.Contains(expr, "oobWait") {
 		return nil
 	}
 
 	// 检查正确的3参数格式
-	oobPattern := regexp.MustCompile(`(?:oobCheck|oobWait)\s*\(\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\s*\)`)
+	oobPattern := regexp.MustCompile(`oobWait\s*\(\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\s*\)`)
 	matches := oobPattern.FindAllStringSubmatch(expr, -1)
 
 	// 检查错误的参数数量
-	wrongParamPattern := regexp.MustCompile(`(?:oobCheck|oobWait)\s*\(([^)]*)\)`)
+	wrongParamPattern := regexp.MustCompile(`oobWait\s*\(([^)]*)\)`)
 	wrongMatches := wrongParamPattern.FindAllStringSubmatch(expr, -1)
 
 	for _, wrongMatch := range wrongMatches {
@@ -434,7 +433,7 @@ func validateOobCheck(expr string) error {
 			}
 
 			if paramCount != 3 {
-				return fmt.Errorf("oobCheck/oobWait函数需要3个参数(oob, protocol, timeout)，但提供了%d个参数", paramCount)
+				return fmt.Errorf("oobWait函数需要3个参数(oob, protocol, timeout)，但提供了%d个参数", paramCount)
 			}
 		}
 	}
@@ -450,12 +449,12 @@ func validateOobCheck(expr string) error {
 			unquoted := strings.Trim(trimmed, `"'`)
 			ul := strings.ToLower(unquoted)
 			if !strings.Contains(protocol, "oob.Protocol") && ul != "dns" && ul != "http" {
-				return fmt.Errorf("oobCheck第二个参数应为协议类型(如oob.ProtocolHTTP/oob.ProtocolDNS 或 \"dns\"/\"http\")，当前为'%s'", protocol)
+				return fmt.Errorf("oobWait第二个参数应为协议类型(如oob.ProtocolHTTP/oob.ProtocolDNS 或 \"dns\"/\"http\")，当前为'%s'", protocol)
 			}
 
 			// 验证超时参数是数字
 			if !regexp.MustCompile(`^\d+$`).MatchString(timeout) {
-				return fmt.Errorf("oobCheck第三个参数应为数字(超时时间)，当前为'%s'", timeout)
+				return fmt.Errorf("oobWait第三个参数应为数字(超时时间)，当前为'%s'", timeout)
 			}
 		}
 	}
@@ -484,7 +483,7 @@ func validateFunctionCalls(expr string) error {
 		"randomInt", "randomLowercase", "sleep",
 		"year", "shortyear", "month", "day", "timestamp_second",
 		"versionCompare", "ysoserial", "aesCBC", "repeat", "decimal", "length",
-		"oobCheck", "oobWait", "wait", "jndi",
+		"oobWait", "wait", "jndi",
 	}
 
 	// 先移除字符串字面量，避免误判字符串内容为函数调用

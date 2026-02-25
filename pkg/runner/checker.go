@@ -110,24 +110,24 @@ func (c *Checker) Check(target string, pocItem *poc.Poc) (err error) {
 	}
 	c.VariableMap["request"] = tempRequest
 
+	o := &proto.OOB{
+		ProtocolHTTP: "http",
+		ProtocolDNS:  "dns",
+	}
 	if OOBAlive && OOB != nil {
 		vdomains := OOB.GetValidationDomain()
-		o := &proto.OOB{
-			Filter:       vdomains.Filter,
-			HTTP:         vdomains.HTTP,
-			DNS:          vdomains.DNS,
-			ProtocolHTTP: "http",
-			ProtocolDNS:  "dns",
-		}
-		c.VariableMap["oob"] = o
-		c.VariableMap["oob_dns"] = o.DNS
-		c.VariableMap["oob_http"] = o.HTTP
-		c.VariableMap["oob_filter"] = o.Filter
-		c.CustomLib.UpdateCompileOption("oob", decls.NewObjectType("proto.OOB"))
-		c.CustomLib.UpdateCompileOption("oob_dns", decls.String)
-		c.CustomLib.UpdateCompileOption("oob_http", decls.String)
-		c.CustomLib.UpdateCompileOption("oob_filter", decls.String)
+		o.Filter = vdomains.Filter
+		o.HTTP = vdomains.HTTP
+		o.DNS = vdomains.DNS
 	}
+	c.VariableMap["oob"] = o
+	c.VariableMap["oob_dns"] = o.DNS
+	c.VariableMap["oob_http"] = o.HTTP
+	c.VariableMap["oob_filter"] = o.Filter
+	c.CustomLib.UpdateCompileOption("oob", decls.NewObjectType("proto.OOB"))
+	c.CustomLib.UpdateCompileOption("oob_dns", decls.String)
+	c.CustomLib.UpdateCompileOption("oob_http", decls.String)
+	c.CustomLib.UpdateCompileOption("oob_filter", decls.String)
 
 	if len(pocItem.Set) > 0 {
 		c.UpdateVariableMap(pocItem.Set)
@@ -752,22 +752,6 @@ func (c *Checker) UpdateVariableMapExtractor(extractors []poc.Extractors) {
 		}
 	}
 
-}
-
-func (c *Checker) oob() *proto.OOB {
-	if OOB == nil {
-		return &proto.OOB{}
-	}
-
-	vdomains := OOB.GetValidationDomain()
-
-	return &proto.OOB{
-		Filter:       vdomains.Filter,
-		HTTP:         vdomains.HTTP,
-		DNS:          vdomains.DNS,
-		ProtocolHTTP: "http",
-		ProtocolDNS:  "dns",
-	}
 }
 
 // func (c *Checker) newRerverse() *proto.Reverse {
