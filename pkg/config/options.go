@@ -56,6 +56,8 @@ type Options struct {
 	// show a afrog-pocs detail
 	PocDetail string
 
+	PocMigrate string
+
 	ExcludePocs     goflags.StringSlice
 	ExcludePocsFile string
 
@@ -264,6 +266,7 @@ func NewOptions() (*Options, error) {
 		flagSet.StringSliceVarP(&options.AppendPoc, "append-poc", "ap", nil, "append PoC file or directory to scan (comma separated)", goflags.NormalizedOriginalStringSliceOptions),
 		flagSet.StringVarP(&options.PocDetail, "poc-detail", "pd", "", "show a afrog-pocs detail"),
 		flagSet.BoolVarP(&options.PocList, "poc-list", "pl", false, "show afrog-pocs list"),
+		flagSet.StringVar(&options.PocMigrate, "pocmigrate", "", "migrate legacy PoCs to new syntax (file or directory)"),
 		flagSet.StringSliceVarP(&options.ExcludePocs, "exclude-pocs", "ep", nil, "pocs to exclude from the scan (comma-separated)", goflags.NormalizedOriginalStringSliceOptions),
 		flagSet.StringVarP(&options.ExcludePocsFile, "exclude-pocs-file", "epf", "", "list of pocs to exclude from scan (file)"),
 	)
@@ -378,6 +381,16 @@ func (opt *Options) VerifyOptions() error {
 
 	if len(opt.Validate) > 0 {
 		validator.ValidatePocFiles(opt.Validate)
+		os.Exit(0)
+	}
+
+	if strings.TrimSpace(opt.PocMigrate) != "" {
+		r, err := poc.MigrateLegacyPocs(opt.PocMigrate)
+		if err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Printf("seen=%d changed=%d changes=%d\n", r.FilesSeen, r.FilesChanged, r.Changes)
 		os.Exit(0)
 	}
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -618,4 +619,253 @@ func LocalReadPocMetaByPath(pocYaml string) (PocMeta, error) {
 		return pm, err
 	}
 	return pm, nil
+}
+
+type MigrateReport struct {
+	FilesSeen    int
+	FilesChanged int
+	Changes      int
+}
+
+func MigrateLegacyPocs(root string) (MigrateReport, error) {
+	r := MigrateReport{}
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return r, fmt.Errorf("missing -pocmigrate")
+	}
+
+	root = filepath.Clean(root)
+	if resolved, err := filepath.EvalSymlinks(root); err == nil && resolved != "" {
+		root = resolved
+	}
+	fi, err := os.Stat(root)
+	if err != nil {
+		return r, err
+	}
+
+	if !fi.IsDir() {
+		changed, n, err := migrateFile(root)
+		if err != nil {
+			return r, err
+		}
+		r.FilesSeen++
+		if changed {
+			r.FilesChanged++
+			r.Changes += n
+		}
+		return r, nil
+	}
+
+	err = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		low := strings.ToLower(d.Name())
+		if !strings.HasSuffix(low, ".yaml") && !strings.HasSuffix(low, ".yml") {
+			return nil
+		}
+		changed, n, err := migrateFile(path)
+		if err != nil {
+			return err
+		}
+		r.FilesSeen++
+		if changed {
+			r.FilesChanged++
+			r.Changes += n
+		}
+		return nil
+	})
+	if err != nil {
+		return r, err
+	}
+	return r, nil
+}
+
+var (
+	reOobCheckCall = regexp.MustCompile(`\boobCheck\s*\(`)
+	reOobDNSTpl    = regexp.MustCompile(`\{\{\s*oobDNS\s*\}\}`)
+	reOobHTTPTpl   = regexp.MustCompile(`\{\{\s*oobHTTP\s*\}\}`)
+	reOobFilterTpl = regexp.MustCompile(`\{\{\s*oobFilter\s*\}\}`)
+
+	reWordOobDNS    = regexp.MustCompile(`\boobDNS\b`)
+	reWordOobHTTP   = regexp.MustCompile(`\boobHTTP\b`)
+	reWordOobFilter = regexp.MustCompile(`\boobFilter\b`)
+)
+
+func migrateFile(path string) (changed bool, changes int, err error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false, 0, err
+	}
+	orig := string(b)
+	s := orig
+
+	if reOobCheckCall.MatchString(s) {
+		s2 := reOobCheckCall.ReplaceAllString(s, "oobWait(")
+		if s2 != s {
+			changes++
+			s = s2
+		}
+	}
+
+	s = replaceTpl(&changes, s, reOobDNSTpl, "{{oob.DNS}}")
+	s = replaceTpl(&changes, s, reOobHTTPTpl, "{{oob.HTTP}}")
+	s = replaceTpl(&changes, s, reOobFilterTpl, "{{oob.Filter}}")
+
+	s = replaceWord(&changes, s, reWordOobDNS, "oob.DNS")
+	s = replaceWord(&changes, s, reWordOobHTTP, "oob.HTTP")
+	s = replaceWord(&changes, s, reWordOobFilter, "oob.Filter")
+
+	s2, n := stripLegacyOOBSet(s)
+	if n > 0 {
+		changes += n
+		s = s2
+	}
+
+	if s == orig {
+		return false, 0, nil
+	}
+	if err := os.WriteFile(path, []byte(s), 0o644); err != nil {
+		return false, 0, err
+	}
+	return true, changes, nil
+}
+
+func replaceTpl(changes *int, s string, re *regexp.Regexp, repl string) string {
+	if !re.MatchString(s) {
+		return s
+	}
+	out := re.ReplaceAllString(s, repl)
+	if out != s {
+		*changes++
+	}
+	return out
+}
+
+func replaceWord(changes *int, s string, re *regexp.Regexp, repl string) string {
+	if !re.MatchString(s) {
+		return s
+	}
+	out := re.ReplaceAllString(s, repl)
+	if out != s {
+		*changes++
+	}
+	return out
+}
+
+func stripLegacyOOBSet(s string) (string, int) {
+	lines := strings.Split(s, "\n")
+	out := make([]string, 0, len(lines))
+	changes := 0
+
+	inSet := false
+	setIndent := ""
+	setStartIdx := -1
+	setOutStartIdx := -1
+	keptNonEmpty := false
+
+	flushSet := func() {
+		if setStartIdx == -1 {
+			return
+		}
+		if !keptNonEmpty {
+			if setOutStartIdx >= 0 && setOutStartIdx < len(out) {
+				out = append(out[:setOutStartIdx], out[setOutStartIdx+1:]...)
+				changes++
+			}
+		}
+		inSet = false
+		setIndent = ""
+		setStartIdx = -1
+		setOutStartIdx = -1
+		keptNonEmpty = false
+	}
+
+	isLegacyOOBSetLine := func(l string) bool {
+		trim := strings.TrimSpace(l)
+		if trim == "" || strings.HasPrefix(trim, "#") {
+			return false
+		}
+		key, _, ok := strings.Cut(trim, ":")
+		if !ok {
+			return false
+		}
+		key = strings.TrimSpace(key)
+		val := strings.TrimSpace(strings.TrimPrefix(trim, key+":"))
+		switch key {
+		case "oob":
+			return val == "oob()"
+		case "oobDNS":
+			return val == "oob.DNS"
+		case "oobHTTP":
+			return val == "oob.HTTP"
+		case "oobFilter":
+			return val == "oob.Filter"
+		default:
+			return false
+		}
+	}
+
+	for _, l := range lines {
+		if !inSet {
+			if strings.HasPrefix(l, "set:") || strings.HasPrefix(l, "set: ") {
+				inSet = true
+				setIndent = ""
+				setStartIdx = len(out)
+				setOutStartIdx = len(out)
+				keptNonEmpty = false
+				out = append(out, l)
+				continue
+			}
+			out = append(out, l)
+			continue
+		}
+
+		if setIndent == "" {
+			if strings.TrimSpace(l) == "" {
+				out = append(out, l)
+				continue
+			}
+			prefix := leadingSpaces(l)
+			if prefix == "" {
+				flushSet()
+				out = append(out, l)
+				continue
+			}
+			setIndent = prefix
+		}
+
+		if strings.TrimSpace(l) == "" {
+			out = append(out, l)
+			continue
+		}
+
+		if !strings.HasPrefix(l, setIndent) {
+			flushSet()
+			out = append(out, l)
+			continue
+		}
+
+		if isLegacyOOBSetLine(l) {
+			changes++
+			continue
+		}
+
+		keptNonEmpty = true
+		out = append(out, l)
+	}
+	flushSet()
+
+	return strings.Join(out, "\n"), changes
+}
+
+func leadingSpaces(s string) string {
+	i := 0
+	for i < len(s) && s[i] == ' ' {
+		i++
+	}
+	return s[:i]
 }
