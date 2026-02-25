@@ -13,6 +13,7 @@ import (
 	"github.com/google/cel-go/common/types/ref"
 	"github.com/google/cel-go/interpreter/functions"
 	"github.com/zan8in/afrog/v3/pkg/log"
+	"github.com/zan8in/afrog/v3/pkg/proto"
 	exprpb "google.golang.org/genproto/googleapis/api/expr/v1alpha1"
 	"gopkg.in/yaml.v2"
 )
@@ -22,6 +23,8 @@ type CustomLib struct {
 	baseProgramOptions []cel.ProgramOption
 	varTypes           map[string]*exprpb.Type
 	ruleFuncs          map[string]bool
+	oobMgr             *OOBManager
+	lastOOBHit         *OOBHitSnapshot
 }
 
 func (c *CustomLib) CompileOptions() []cel.EnvOption {
@@ -84,6 +87,47 @@ func (c *CustomLib) ProgramOptions() []cel.ProgramOption {
 		}
 		opts = append(opts, cel.Functions(overloads...))
 	}
+
+	opts = append(opts, cel.Functions(
+		&functions.Overload{
+			Operator: "oobWait_oob_string_int",
+			Function: func(values ...ref.Val) ref.Val {
+				if len(values) != 3 {
+					return types.NewErr("invalid arguments to 'oobWait'")
+				}
+				oob, ok := values[0].Value().(*proto.OOB)
+				if !ok {
+					return types.ValOrErr(values[0], "unexpected type '%v' passed to oobWait", values[0].Type())
+				}
+				filterType, ok := values[1].(types.String)
+				if !ok {
+					return types.ValOrErr(values[1], "unexpected type '%v' passed to oobWait", values[1].Type())
+				}
+				timeout, ok := values[2].(types.Int)
+				if !ok {
+					return types.ValOrErr(values[2], "unexpected type '%v' passed to oobWait", values[2].Type())
+				}
+
+				mgr := c.oobMgr
+				if mgr == nil || oob == nil || strings.TrimSpace(oob.Filter) == "" {
+					return types.Bool(false)
+				}
+
+				ft := strings.TrimSpace(string(filterType))
+				to := int64(timeout)
+				if to == 0 {
+					to = 3
+				}
+				waitOK := mgr.Wait(oob.Filter, ft, time.Second*time.Duration(to))
+				if waitOK {
+					if snap, ok2 := mgr.HitSnapshot(oob.Filter, ft); ok2 {
+						c.lastOOBHit = &snap
+					}
+				}
+				return types.Bool(waitOK)
+			},
+		},
+	))
 
 	return opts
 }
@@ -198,6 +242,10 @@ func (c *CustomLib) UpdateCompileOption(k string, t *exprpb.Type) {
 		c.varTypes = make(map[string]*exprpb.Type)
 	}
 	c.varTypes[k] = t
+}
+
+func (c *CustomLib) SetOOBManager(mgr *OOBManager) {
+	c.oobMgr = mgr
 }
 
 func (c *CustomLib) Reset() {

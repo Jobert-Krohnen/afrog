@@ -7,7 +7,38 @@ import (
 	"github.com/zan8in/afrog/v3/pkg/fingerprint"
 	"github.com/zan8in/afrog/v3/pkg/utils"
 	timeutil "github.com/zan8in/pins/time"
+	"gopkg.in/yaml.v2"
 )
+
+func oobEvidenceFromExtractorMinimal(extractor yaml.MapSlice) (metaFields []string, snippet string, ok bool) {
+	if len(extractor) == 0 {
+		return nil, "", false
+	}
+	for _, it := range extractor {
+		k, ok := it.Key.(string)
+		if !ok || k != "oob_evidence" {
+			continue
+		}
+		s, ok := it.Value.(string)
+		if !ok {
+			s = fmt.Sprint(it.Value)
+		}
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return nil, "", false
+		}
+		parts := strings.SplitN(s, "\n", 2)
+		meta := strings.TrimSpace(parts[0])
+		if len(parts) == 2 {
+			snippet = strings.TrimSpace(parts[1])
+		}
+		if meta != "" {
+			metaFields = strings.Fields(meta)
+		}
+		return metaFields, snippet, true
+	}
+	return nil, "", false
+}
 
 func (report *Report) minimalHtml(line string) string {
 	htResult := report.Result
@@ -75,6 +106,25 @@ func (report *Report) minimalHtml(line string) string {
 			items = append(items, xssfilter(item))
 		}
 		info += fmt.Sprintf(`<p><strong>指纹:</strong> %s</p>`, strings.Join(items, ", "))
+	}
+	if metaFields, snippet, ok := oobEvidenceFromExtractorMinimal(htResult.Extractor); ok {
+		info += `<div class="oob-evidence">`
+		info += `<div class="oob-title">OOB Evidence</div>`
+		if len(metaFields) > 0 {
+			info += `<div class="oob-badges">`
+			for _, f := range metaFields {
+				f = strings.TrimSpace(f)
+				if f == "" {
+					continue
+				}
+				info += `<span class="oob-badge">` + xssfilter(f) + `</span>`
+			}
+			info += `</div>`
+		}
+		if strings.TrimSpace(snippet) != "" {
+			info += fmt.Sprintf(`<pre class="code-block">%s</pre>`, xssfilter(snippet))
+		}
+		info += `</div>`
 	}
 
 	info += `</div>`
@@ -356,6 +406,31 @@ func minimalHeader() string {
 			max-width: 100%; /* 限制最大宽度 */
 			white-space: pre; /* 保持原始格式但不自动换行 */
 			word-break: break-all; /* 强制长单词换行 */
+		}
+		.oob-evidence {
+			margin-top: 14px;
+			padding-top: 14px;
+			border-top: 1px solid #e9ecef;
+		}
+		.oob-title {
+			font-weight: 600;
+			color: #495057;
+			margin-bottom: 8px;
+		}
+		.oob-badges {
+			display: flex;
+			gap: 8px;
+			flex-wrap: wrap;
+			margin-bottom: 10px;
+		}
+		.oob-badge {
+			display: inline-block;
+			padding: 2px 8px;
+			border-radius: 999px;
+			background: #e9ecef;
+			color: #495057;
+			font-size: 12px;
+			font-family: 'Consolas', 'Monaco', monospace;
 		}
 
 		.copy-btn {

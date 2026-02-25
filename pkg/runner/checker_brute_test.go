@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/cel-go/checker/decls"
 	"github.com/zan8in/afrog/v3/pkg/config"
@@ -573,6 +575,104 @@ expression: r0()
 	mu.Unlock()
 	if len(got) != 3 || got[0] != "a" || got[1] != "b" || got[2] != "c" {
 		t.Fatalf("expected brute order [a b c], got %#v", got)
+	}
+}
+
+func TestCheckerNeedsOOB(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want bool
+	}{
+		{
+			name: "expression_oobwait",
+			yaml: `
+id: t1
+info:
+  name: t1
+  author: test
+  severity: info
+expression: oobWait(oob, oob.ProtocolDNS, 3)
+`,
+			want: true,
+		},
+		{
+			name: "request_template",
+			yaml: `
+id: t2
+info:
+  name: t2
+  author: test
+  severity: info
+rules:
+  r0:
+    request:
+      method: GET
+      path: /?x={{oob.DNS}}
+    expression: response.status == 200
+expression: r0()
+`,
+			want: true,
+		},
+		{
+			name: "no_oob",
+			yaml: `
+id: t3
+info:
+  name: t3
+  author: test
+  severity: info
+expression: 1 == 1
+`,
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &poc.Poc{}
+			if err := yaml.Unmarshal([]byte(tt.yaml), p); err != nil {
+				t.Fatalf("unmarshal poc yaml: %v", err)
+			}
+			if got := checkerNeedsOOB(p); got != tt.want {
+				t.Fatalf("checkerNeedsOOB=%v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAttachOOBEvidence(t *testing.T) {
+	c := &Checker{
+		VariableMap: map[string]any{},
+		Result:      &result.Result{},
+		CustomLib:   NewCustomLib(),
+	}
+	lastAt := time.Unix(1700000000, 0).UTC()
+	snap := OOBHitSnapshot{
+		FilterType: "dns",
+		Count:      2,
+		LastAt:     lastAt,
+		Snippet:    "RAW-BODY",
+	}
+	c.CustomLib.lastOOBHit = &snap
+
+	c.attachOOBEvidence()
+
+	found := false
+	for _, it := range c.Result.Extractor {
+		if it.Key == "oob_evidence" {
+			s, ok := it.Value.(string)
+			if !ok {
+				t.Fatalf("expected string oob_evidence, got %#v", it.Value)
+			}
+			if !strings.Contains(s, "protocol=dns") || !strings.Contains(s, "RAW-BODY") {
+				t.Fatalf("unexpected oob_evidence: %q", s)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected oob_evidence in extractor, got %#v", c.Result.Extractor)
 	}
 }
 

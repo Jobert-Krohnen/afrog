@@ -7,12 +7,43 @@ import (
 	"github.com/zan8in/afrog/v3/pkg/fingerprint"
 	"github.com/zan8in/afrog/v3/pkg/utils"
 	timeutil "github.com/zan8in/pins/time"
+	"gopkg.in/yaml.v2"
 )
 
 func xssfilter(s string) string {
 	s = strings.ReplaceAll(s, "<", "%3C")
 	s = strings.ReplaceAll(s, ">", "%3E")
 	return s
+}
+
+func oobEvidenceFromExtractor(extractor yaml.MapSlice) (metaFields []string, snippet string, ok bool) {
+	if len(extractor) == 0 {
+		return nil, "", false
+	}
+	for _, it := range extractor {
+		k, ok := it.Key.(string)
+		if !ok || k != "oob_evidence" {
+			continue
+		}
+		s, ok := it.Value.(string)
+		if !ok {
+			s = fmt.Sprint(it.Value)
+		}
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return nil, "", false
+		}
+		parts := strings.SplitN(s, "\n", 2)
+		meta := strings.TrimSpace(parts[0])
+		if len(parts) == 2 {
+			snippet = strings.TrimSpace(parts[1])
+		}
+		if meta != "" {
+			metaFields = strings.Fields(meta)
+		}
+		return metaFields, snippet, true
+	}
+	return nil, "", false
 }
 
 func (report *Report) defaultHmtl(line string) string {
@@ -61,6 +92,25 @@ func (report *Report) defaultHmtl(line string) string {
 			items = append(items, xssfilter(item))
 		}
 		info += "<br/><b>fingerprint:</b> " + strings.Join(items, ", ")
+	}
+	if metaFields, snippet, ok := oobEvidenceFromExtractor(htResult.Extractor); ok {
+		info += `<div class="oob-box">`
+		info += `<div class="oob-title"><span class="oob-label">OOB Evidence</span></div>`
+		if len(metaFields) > 0 {
+			info += `<div class="oob-badges">`
+			for _, f := range metaFields {
+				f = strings.TrimSpace(f)
+				if f == "" {
+					continue
+				}
+				info += `<span class="oob-badge">` + xssfilter(f) + `</span>`
+			}
+			info += `</div>`
+		}
+		if strings.TrimSpace(snippet) != "" {
+			info += `<div class="oob-snippet"><xmp>` + xssfilter(snippet) + `</xmp></div>`
+		}
+		info += `</div>`
 	}
 
 	header := "<tbody>"
@@ -291,6 +341,12 @@ func defaultHeader() string {
 			.webprobe-url:hover{text-decoration:underline}
 			.webprobe-badges{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-start}
 			.webprobe-badge{padding:2px 6px;border-radius:4px;background:rgba(255,255,255,0.08);color:#B4C1C3;font-size:11px;max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+			.oob-box{margin-top:10px;border:1px solid #60786F;border-radius:6px;background:#223B46;color:#DDE2DE;padding:10px}
+			.oob-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+			.oob-label{font-weight:bold;letter-spacing:.2px}
+			.oob-badges{display:flex;gap:6px;flex-wrap:wrap}
+			.oob-badge{padding:2px 6px;border-radius:4px;background:rgba(255,255,255,0.10);color:#B4C1C3;font-size:11px}
+			.oob-snippet{margin-top:8px;border-radius:4px;background:#1d313a;padding:8px;max-height:260px;overflow:auto}
 		</style>
 		<script>
 			/*! jQuery v1.11.1 | (c) 2005, 2014 jQuery Foundation, Inc. | jquery.org/license */

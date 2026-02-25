@@ -206,6 +206,8 @@ type Options struct {
 	OOBDomain  string
 	OOBHttpUrl string
 	OOBApiUrl  string
+	OOBPollInterval int
+	OOBHitRetention int
 
 	// SDK模式标志，用于控制OOB检测行为
 	SDKMode   bool
@@ -294,6 +296,8 @@ func NewOptions() (*Options, error) {
 		flagSet.BoolVar(&options.Smart, "smart", false, "intelligent adjustment of concurrency based on changes in the total number of assets being scanned"),
 		flagSet.IntVarP(&options.OOBRateLimit, "oob-rate-limit", "orl", 25, "oob poc maximum number of requests to send per second"),
 		flagSet.IntVarP(&options.OOBConcurrency, "oob-concurrency", "oc", 25, "oob poc maximum number of afrog-pocs to be executed in parallel"),
+		flagSet.IntVar(&options.OOBPollInterval, "oob-poll-interval", 1, "oob polling interval in seconds"),
+		flagSet.IntVar(&options.OOBHitRetention, "oob-hit-retention", 10, "oob hit retention in minutes"),
 	)
 
 	flagSet.CreateGroup("optimization", "Optimization",

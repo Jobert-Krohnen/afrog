@@ -22,16 +22,9 @@ import (
 	"github.com/zan8in/afrog/v3/pkg/webhook/dingtalk"
 	"github.com/zan8in/afrog/v3/pkg/webhook/wecom"
 	"github.com/zan8in/afrog/v3/pocs"
-	"github.com/zan8in/oobadapter/pkg/oobadapter"
 )
 
 type OnResult func(*result.Result)
-
-var (
-	OOB      *oobadapter.OOBAdapter
-	OOBAlive bool
-	OOBMgr   *OOBManager
-)
 
 type Runner struct {
 	options           *config.Options

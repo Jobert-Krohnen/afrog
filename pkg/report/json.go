@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/zan8in/afrog/v3/pkg/utils"
 	fileutil "github.com/zan8in/pins/file"
 	timeutil "github.com/zan8in/pins/time"
+	"gopkg.in/yaml.v2"
 )
 
 type JsonReport struct {
@@ -25,11 +27,12 @@ type JsonReport struct {
 }
 
 type JsonResult struct {
-	IsVul      bool          `json:"isvul,omitempty"`
-	Target     string        `json:"target"`
-	FullTarget string        `json:"fulltarget,omitempty"`
-	PocInfo    JsonPocInfo   `json:"pocinfo,omitempty"`
-	PocResult  []JsonReqResp `json:"pocresult,omitempty"`
+	IsVul      bool           `json:"isvul,omitempty"`
+	Target     string         `json:"target"`
+	FullTarget string         `json:"fulltarget,omitempty"`
+	PocInfo    JsonPocInfo    `json:"pocinfo,omitempty"`
+	PocResult  []JsonReqResp  `json:"pocresult,omitempty"`
+	Extractor  map[string]any `json:"extractor,omitempty"`
 }
 
 type JsonPocInfo struct {
@@ -44,6 +47,21 @@ type JsonPocInfo struct {
 type JsonReqResp struct {
 	Request  string `json:"request,omitempty"`
 	Response string `json:"response,omitempty"`
+}
+
+func extractorToMap(extractor yaml.MapSlice) map[string]any {
+	if len(extractor) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(extractor))
+	for _, it := range extractor {
+		k, ok := it.Key.(string)
+		if !ok || strings.TrimSpace(k) == "" {
+			k = fmt.Sprint(it.Key)
+		}
+		out[k] = it.Value
+	}
+	return out
 }
 
 func NewJsonReport(json, JsonAll string) (*JsonReport, error) {
@@ -170,6 +188,9 @@ func (jr *JsonReport) JsonContent() *JsonResult {
 			InfoReference:   rst.PocInfo.Info.Reference,
 		},
 		PocResult: []JsonReqResp{},
+	}
+	if len(rst.Extractor) > 0 {
+		jresult.Extractor = extractorToMap(rst.Extractor)
 	}
 
 	if len(rst.AllPocResult) > 0 && jr.JsonAll {

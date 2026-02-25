@@ -478,7 +478,7 @@ func reportsHandler(w http.ResponseWriter, r *http.Request) {
 	severityParam := strings.Join(severityList, ",")
 
 	// expand 解析（默认不展开任何大字段）
-	var expandPoc, expandResult bool
+	var expandPoc, expandResult, expandExtractor bool
 	if expandRaw != "" {
 		for _, e := range strings.Split(expandRaw, ",") {
 			switch strings.ToLower(strings.TrimSpace(e)) {
@@ -486,9 +486,12 @@ func reportsHandler(w http.ResponseWriter, r *http.Request) {
 				expandPoc = true
 			case "resultlist":
 				expandResult = true
+			case "extractor":
+				expandExtractor = true
 			case "all":
 				expandPoc = true
 				expandResult = true
+				expandExtractor = true
 			}
 		}
 	}
@@ -527,6 +530,17 @@ func reportsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		if expandResult {
 			item.ResultList = it.ResultList
+		}
+		if expandExtractor {
+			raw := strings.TrimSpace(it.Extractor)
+			if raw != "" {
+				var v any
+				if json.Unmarshal([]byte(raw), &v) == nil {
+					item.Extractor = v
+				} else {
+					item.Extractor = raw
+				}
+			}
 		}
 		respItems = append(respItems, item)
 	}
@@ -567,9 +581,9 @@ func reportsDetailHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	// expand 解析（详情默认全展开）
 	expandRaw := strings.TrimSpace(r.URL.Query().Get("expand"))
-	expandPoc, expandResult, expandFingerprint := true, true, true
+	expandPoc, expandResult, expandFingerprint, expandExtractor := true, true, true, true
 	if expandRaw != "" {
-		expandPoc, expandResult, expandFingerprint = false, false, false
+		expandPoc, expandResult, expandFingerprint, expandExtractor = false, false, false, false
 		for _, e := range strings.Split(expandRaw, ",") {
 			switch strings.ToLower(strings.TrimSpace(e)) {
 			case "pocinfo":
@@ -578,10 +592,13 @@ func reportsDetailHandler(w http.ResponseWriter, r *http.Request) {
 				expandResult = true
 			case "fingerprint":
 				expandFingerprint = true
+			case "extractor":
+				expandExtractor = true
 			case "all":
 				expandPoc = true
 				expandResult = true
 				expandFingerprint = true
+				expandExtractor = true
 			}
 		}
 	}
@@ -620,6 +637,17 @@ func reportsDetailHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if expandResult {
 		item.ResultList = row.ResultList
+	}
+	if expandExtractor {
+		raw := strings.TrimSpace(row.Extractor)
+		if raw != "" {
+			var v any
+			if json.Unmarshal([]byte(raw), &v) == nil {
+				item.Extractor = v
+			} else {
+				item.Extractor = raw
+			}
+		}
 	}
 
 	json.NewEncoder(w).Encode(APIResponse{

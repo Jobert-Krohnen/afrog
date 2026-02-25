@@ -22,6 +22,7 @@ import (
 	"github.com/zan8in/afrog/v3/pkg/proto"
 	"github.com/zan8in/afrog/v3/pkg/utils"
 	"github.com/zan8in/gologger"
+	"github.com/zan8in/oobadapter/pkg/oobadapter"
 	"gopkg.in/yaml.v2"
 )
 
@@ -33,6 +34,9 @@ type Checker struct {
 	VariableMap map[string]any
 	Result      *result.Result
 	CustomLib   *CustomLib
+	OOBAdapter  *oobadapter.OOBAdapter
+	OOBAlive    bool
+	OOBMgr      *OOBManager
 }
 
 type bruteConfig struct {
@@ -44,6 +48,54 @@ type bruteConfig struct {
 type savedVar struct {
 	value  any
 	exists bool
+}
+
+func checkerNeedsOOB(p *poc.Poc) bool {
+	if p == nil {
+		return false
+	}
+	if checkerContainsOOBToken(p.Expression) {
+		return true
+	}
+	for _, it := range p.Set {
+		if s, ok := it.Value.(string); ok && checkerContainsOOBToken(s) {
+			return true
+		}
+	}
+	for _, rm := range p.Rules {
+		r := rm.Value
+		if checkerContainsOOBToken(r.Expression) {
+			return true
+		}
+		for _, e := range r.Expressions {
+			if checkerContainsOOBToken(e) {
+				return true
+			}
+		}
+		req := r.Request
+		if checkerContainsOOBToken(req.Path) || checkerContainsOOBToken(req.Host) || checkerContainsOOBToken(req.Body) || checkerContainsOOBToken(req.Raw) || checkerContainsOOBToken(req.Data) {
+			return true
+		}
+		for _, hv := range req.Headers {
+			if checkerContainsOOBToken(hv) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func checkerContainsOOBToken(s string) bool {
+	if s == "" {
+		return false
+	}
+	l := strings.ToLower(s)
+	return strings.Contains(l, "oobwait(") ||
+		strings.Contains(l, "{{oob") ||
+		strings.Contains(l, "{{ oob") ||
+		strings.Contains(l, "oob_") ||
+		strings.Contains(l, "oob.") ||
+		strings.Contains(l, "oob()")
 }
 
 func celSafeIdent(s string) string {
@@ -114,8 +166,8 @@ func (c *Checker) Check(target string, pocItem *poc.Poc) (err error) {
 		ProtocolHTTP: "http",
 		ProtocolDNS:  "dns",
 	}
-	if OOBAlive && OOB != nil {
-		vdomains := OOB.GetValidationDomain()
+	if checkerNeedsOOB(pocItem) && c.OOBAlive && c.OOBAdapter != nil {
+		vdomains := c.OOBAdapter.GetValidationDomain()
 		o.Filter = vdomains.Filter
 		o.HTTP = vdomains.HTTP
 		o.DNS = vdomains.DNS
@@ -361,6 +413,7 @@ func (c *Checker) Check(target string, pocItem *poc.Poc) (err error) {
 				c.UpdateVariableMapExtractor(pocItem.Extractors)
 			}
 			c.Result.IsVul = true
+			c.attachOOBEvidence()
 			return err
 		}
 
@@ -374,6 +427,7 @@ func (c *Checker) Check(target string, pocItem *poc.Poc) (err error) {
 				c.UpdateVariableMapExtractor(pocItem.Extractors)
 			}
 			c.Result.IsVul = true
+			c.attachOOBEvidence()
 			return err
 		}
 
@@ -390,8 +444,24 @@ func (c *Checker) Check(target string, pocItem *poc.Poc) (err error) {
 	}
 
 	c.Result.IsVul = isVul.Value().(bool)
+	if c.Result.IsVul {
+		c.attachOOBEvidence()
+	}
 
 	return err
+}
+
+func (c *Checker) attachOOBEvidence() {
+	if c == nil || c.Result == nil || c.CustomLib == nil || c.CustomLib.lastOOBHit == nil {
+		return
+	}
+	snap := c.CustomLib.lastOOBHit
+	if snap == nil || strings.TrimSpace(snap.Snippet) == "" {
+		return
+	}
+	meta := fmt.Sprintf("protocol=%s count=%d last_at=%s", snap.FilterType, snap.Count, snap.LastAt.Format(time.RFC3339Nano))
+	ev := meta + "\n" + snap.Snippet
+	c.Result.Extractor = append(c.Result.Extractor, yaml.MapItem{Key: "oob_evidence", Value: ev})
 }
 
 func cloneRuleRequest(req poc.RuleRequest) poc.RuleRequest {

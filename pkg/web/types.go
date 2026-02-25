@@ -41,6 +41,7 @@ type ReportItem struct {
 	Fingerprint interface{} `json:"fingerprint,omitempty"`
 	PocInfo     interface{} `json:"pocInfo,omitempty"`    // 展开后的 POC 信息（与前端展示一致）
 	ResultList  interface{} `json:"resultList,omitempty"` // 解析后的请求响应列表
+	Extractor   interface{} `json:"extractor,omitempty"`
 }
 
 // 报告列表 - 响应

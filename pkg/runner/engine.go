@@ -459,6 +459,12 @@ func (e *Engine) AcquireChecker() *Checker {
 	c := CheckerPool.Get().(*Checker)
 	c.Options = e.options
 	c.Result.Output = e.options.Output
+	c.OOBAdapter = e.oobAdapter
+	c.OOBAlive = e.oobAlive
+	c.OOBMgr = e.oobMgr
+	if c.CustomLib != nil {
+		c.CustomLib.SetOOBManager(e.oobMgr)
+	}
 	return c
 }
 
@@ -467,6 +473,9 @@ func (e *Engine) ReleaseChecker(c *Checker) {
 	c.VariableMap = make(map[string]any)
 	c.Result = &result.Result{}
 	c.CustomLib = NewCustomLib()
+	c.OOBAdapter = nil
+	c.OOBAlive = false
+	c.OOBMgr = nil
 	CheckerPool.Put(c)
 }
 
@@ -482,6 +491,9 @@ type Engine struct {
 	slowLogged    uint32
 	pedmMu        sync.Mutex
 	pedmStatsByID map[string]*pedmStat
+	oobAdapter    *oobadapter.OOBAdapter
+	oobAlive      bool
+	oobMgr        *OOBManager
 }
 
 func NewEngine(options *config.Options) *Engine {
@@ -631,6 +643,11 @@ func (runner *Runner) Execute() {
 	if runner.engine != nil {
 		runner.engine.pedmReset()
 	}
+	if runner.engine != nil {
+		runner.engine.oobAdapter = nil
+		runner.engine.oobAlive = false
+		runner.engine.oobMgr = nil
+	}
 
 	pocSlice := options.CreatePocList()
 	fingerprintPocs, pocSlice := options.FingerprintPoCs(pocSlice)
@@ -643,9 +660,10 @@ func (runner *Runner) Execute() {
 	if len(reversePocs) > 0 {
 		// 检查是否是SDK模式且未启用OOB
 		if options.SDKMode && !options.EnableOOB {
-			// SDK模式下未启用OOB，跳过连接检测
-			OOB = nil
-			OOBAlive = false
+			if runner.engine != nil {
+				runner.engine.oobAdapter = nil
+				runner.engine.oobAlive = false
+			}
 		} else {
 			// 非SDK模式或已启用OOB，执行正常的连接检测
 			runner.options.SetOOBAdapter()
@@ -655,10 +673,15 @@ func (runner *Runner) Execute() {
 				HTTPUrl: options.OOBHttpUrl,
 				ApiUrl:  options.OOBApiUrl,
 			}); err == nil {
-				OOB = oobAdapter
-				OOBAlive = OOB.IsVaild()
+				if runner.engine != nil {
+					runner.engine.oobAdapter = oobAdapter
+					runner.engine.oobAlive = oobAdapter.IsVaild()
+				}
 			} else {
-				OOBAlive = false
+				if runner.engine != nil {
+					runner.engine.oobAdapter = nil
+					runner.engine.oobAlive = false
+				}
 			}
 		}
 		// if !OOBAlive {
@@ -666,10 +689,10 @@ func (runner *Runner) Execute() {
 		// }
 	}
 
-	if OOBAlive && OOB != nil {
-		OOBMgr = NewOOBManager(runner.ctx, OOB)
-	} else {
-		OOBMgr = nil
+	if runner.engine != nil && runner.engine.oobAlive && runner.engine.oobAdapter != nil {
+		pollInterval := time.Duration(options.OOBPollInterval) * time.Second
+		hitRetention := time.Duration(options.OOBHitRetention) * time.Minute
+		runner.engine.oobMgr = NewOOBManager(runner.ctx, runner.engine.oobAdapter, pollInterval, hitRetention)
 	}
 
 	runner.printOOBStatus(reversePocs)
@@ -1536,11 +1559,11 @@ func (runner *Runner) getOOBStatus(reversePocs []poc.Poc) (bool, string) {
 	// 从配置中获取当前OOB服务名称
 	serviceName := strings.ToLower(runner.options.OOB)
 
-	if OOB == nil {
+	if runner.engine == nil || runner.engine.oobAdapter == nil {
 		return false, fmt.Sprintf("%s (Not configured)", serviceName)
 	}
 
-	if !OOB.IsVaild() {
+	if !runner.engine.oobAdapter.IsVaild() {
 		return false, fmt.Sprintf("%s (Connection failed)", serviceName)
 	}
 

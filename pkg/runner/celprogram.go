@@ -16,14 +16,11 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/zan8in/oobadapter/pkg/oobadapter"
-
 	"github.com/dlclark/regexp2"
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/types"
 	"github.com/google/cel-go/common/types/ref"
 	"github.com/google/cel-go/interpreter/functions"
-	"github.com/zan8in/afrog/v3/pkg/proto"
 	"github.com/zan8in/afrog/v3/pkg/utils"
 )
 
@@ -724,24 +721,6 @@ var (
 			// 		return types.Bool(jndiCheck(reverse, timeout))
 			// 	},
 			// },
-			&functions.Overload{
-				Operator: "oobWait_oob_string_int",
-				Function: func(values ...ref.Val) ref.Val {
-					oob, ok := values[0].Value().(*proto.OOB)
-					if !ok {
-						return types.ValOrErr(values[0], "unexpected type '%v' passed to toUintString", values[0].Type())
-					}
-					filterType, ok := values[1].(types.String)
-					if !ok {
-						return types.ValOrErr(values[1], "unexpected type '%v' passed to toUintString", values[1].Type())
-					}
-					timeout, ok := values[2].(types.Int)
-					if !ok {
-						return types.ValOrErr(values[2], "unexpected type '%v' passed to toUintString", values[2].Type())
-					}
-					return types.Bool(oobWait(oob, string(filterType), int64(timeout)))
-				},
-			},
 			// other
 			&functions.Overload{
 				Operator: "sleep_int",
@@ -1356,22 +1335,6 @@ func ReadProgramOptions(reg ref.TypeRegistry) []cel.ProgramOption {
 
 // 	return false
 // }
-
-func oobWait(oob *proto.OOB, filterType string, timeout int64) bool {
-	if oob == nil || OOB == nil || !OOBAlive || OOBMgr == nil || len(oob.Filter) == 0 {
-		return false
-	}
-
-	if len(filterType) == 0 {
-		filterType = oobadapter.OOBDNS
-	}
-
-	if timeout == 0 {
-		timeout = 3
-	}
-
-	return OOBMgr.Wait(oob.Filter, filterType, time.Second*time.Duration(timeout))
-}
 
 // func jndiCheck(reverse *proto.Reverse, timeout int64) bool {
 // 	// if len(config.ReverseJndi) == 0 && len(config.ReverseApiPort) == 0 {
