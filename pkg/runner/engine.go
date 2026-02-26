@@ -1294,7 +1294,31 @@ func (runner *Runner) Execute() {
 	if oobCon <= 0 {
 		oobCon = options.Concurrency
 	}
-	runStage(reversePocs, oobRate, oobCon)
+	if runner.engine != nil && len(reversePocs) > 0 && (!runner.engine.oobAlive || runner.engine.oobAdapter == nil) {
+		for _, pocItem := range reversePocs {
+			if atomic.LoadUint32(&runner.engine.stopped) != 0 || runner.options.VulnerabilityScannerBreakpoint || runner.ctx.Err() != nil {
+				break
+			}
+			targetView := webScanTargets
+			if isNetOnlyPoc(pocItem) {
+				targetView = netTargetsStrict
+			}
+
+			if len(runner.options.Resume) > 0 && runner.ScanProgress.Contains(pocItem.Id) {
+				for range targetView {
+					runner.NotVulCallback()
+				}
+				continue
+			}
+
+			for range targetView {
+				runner.NotVulCallback()
+			}
+			runner.ScanProgress.Increment(pocItem.Id)
+		}
+	} else {
+		runStage(reversePocs, oobRate, oobCon)
+	}
 
 	if options.PocExecutionDurationMonitor && runner.engine != nil {
 		runner.engine.pedmSummary(options)
