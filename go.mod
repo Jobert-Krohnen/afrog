@@ -5,15 +5,21 @@ go 1.24.0
 toolchain go1.24.1
 
 require (
+	gitee.com/chunanyong/dm v1.8.22
+	github.com/Azure/go-ntlmssp v0.1.0
 	github.com/blinkbean/dingtalk v0.0.0-20230927120905-796332ac4ba1
 	github.com/cavaliergopher/grab/v3 v3.0.1
+	github.com/denisenkom/go-mssqldb v0.12.3
 	github.com/dlclark/regexp2 v1.8.1
+	github.com/go-zookeeper/zk v1.0.4
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/google/cel-go v0.9.0
 	github.com/gookit/color v1.5.0
 	github.com/gorilla/mux v1.8.1
+	github.com/hirochachacha/go-smb2 v1.1.0
 	github.com/jmoiron/sqlx v1.3.5
 	github.com/karrick/godirwalk v1.16.1
+	github.com/lib/pq v1.10.9
 	github.com/logoove/sqlite v1.15.3
 	github.com/natefinch/lumberjack v2.0.0+incompatible
 	github.com/nu1r/GlangYsoserial v0.0.0-20230328012701-a4e955b25ab7
@@ -22,27 +28,26 @@ require (
 	github.com/remeh/sizedwaitgroup v1.0.0
 	github.com/rs/xid v1.5.0
 	github.com/shirou/gopsutil/v3 v3.24.5
+	github.com/sijms/go-ora/v2 v2.9.0
 	github.com/spaolacci/murmur3 v1.1.0
+	github.com/vimsucks/wxwork-bot-go v1.0.0
 	github.com/zan8in/fileutil v0.0.0-20220917063910-ce47dcc0cfa9
 	github.com/zan8in/goflags v0.0.0-20230204144650-0745934af58a
 	github.com/zan8in/gologger v0.0.0-20220917062627-c34a83c0a373
 	github.com/zan8in/goupdate v1.0.0
-	github.com/zan8in/oobadapter v0.0.0-20240611013553-c79cb5eec939
+	github.com/zan8in/oobadapter v2.0.0+incompatible
 	github.com/zan8in/pins v0.0.0-20240530014940-e9ebb462913a
 	github.com/zan8in/rawhttp v0.0.0-20230318132449-31532db674af
 	github.com/zan8in/retryablehttp v1.0.0
 	github.com/zan8in/zoomeye v0.0.0-20231206032430-be54343a903a
+	go.mongodb.org/mongo-driver v1.17.6
 	go.uber.org/zap v1.21.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20230530153820-e85fd2cbaebc
 	google.golang.org/protobuf v1.31.0
 	gopkg.in/yaml.v2 v2.4.0
 )
 
-replace github.com/zan8in/oobadapter => ./oobadapter
-
 require (
-	gitee.com/chunanyong/dm v1.8.22 // indirect
-	github.com/Azure/go-ntlmssp v0.1.0 // indirect
 	github.com/DataDog/zstd v1.5.2 // indirect
 	github.com/Mzack9999/go-http-digest-auth-client v0.6.1-0.20220414142836-eb8883508809 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
@@ -55,14 +60,12 @@ require (
 	github.com/cockroachdb/logtags v0.0.0-20211118104740-dabe8e521a4f // indirect
 	github.com/cockroachdb/pebble v0.0.0-20230315223031-1e5ddd10389e // indirect
 	github.com/cockroachdb/redact v1.1.3 // indirect
-	github.com/denisenkom/go-mssqldb v0.12.3 // indirect
 	github.com/dsnet/compress v0.0.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/geoffgarside/ber v1.1.0 // indirect
 	github.com/getsentry/sentry-go v0.16.0 // indirect
 	github.com/go-errors/errors v1.4.2 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
-	github.com/go-zookeeper/zk v1.0.4 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang-sql/civil v0.0.0-20190719163853-cb61b32ac6fe // indirect
 	github.com/golang-sql/sqlexp v0.1.0 // indirect
@@ -72,18 +75,13 @@ require (
 	github.com/gorilla/css v1.0.1 // indirect
 	github.com/gosuri/uilive v0.0.4 // indirect
 	github.com/gosuri/uiprogress v0.0.1 // indirect
-	github.com/hirochachacha/go-smb2 v1.1.0 // indirect
-	github.com/icodeface/grdp v0.0.0-20200414055757-e0008b0b5cb2 // indirect
-	github.com/icodeface/tls v0.0.0-20190904082144-a3e1fe30543e // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51 // indirect
 	github.com/klauspost/pgzip v1.2.5 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
-	github.com/lib/pq v1.10.9 // indirect
 	github.com/logrusorgru/aurora v2.0.3+incompatible // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
-	github.com/lunixbochs/struc v0.0.0-20190326164542-a9e4041416c2 // indirect
 	github.com/mamh-mixed/go-gitee v0.0.0-20221206115455-d359bf67671f // indirect
 	github.com/mattn/go-isatty v0.0.17 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.4 // indirect
@@ -103,7 +101,6 @@ require (
 	github.com/rogpeppe/go-internal v1.9.0 // indirect
 	github.com/saintfish/chardet v0.0.0-20230101081208-5e3ef4b5456d // indirect
 	github.com/shoenig/go-m1cpu v0.1.7 // indirect
-	github.com/sijms/go-ora/v2 v2.9.0 // indirect
 	github.com/sirupsen/logrus v1.9.0 // indirect
 	github.com/tidwall/btree v1.4.3 // indirect
 	github.com/tidwall/buntdb v1.2.10 // indirect
@@ -116,7 +113,6 @@ require (
 	github.com/tklauser/go-sysconf v0.3.12 // indirect
 	github.com/tklauser/numcpus v0.6.1 // indirect
 	github.com/ulikunitz/xz v0.5.10 // indirect
-	github.com/vimsucks/wxwork-bot-go v1.0.0 // indirect
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
 	github.com/xdg-go/scram v1.1.2 // indirect
 	github.com/xdg-go/stringprep v1.0.4 // indirect
@@ -125,7 +121,6 @@ require (
 	github.com/zan8in/fastdialer v0.0.0-20230318130117-360c8bf6e5bb // indirect
 	github.com/zan8in/retryabledns v0.0.0-20230317092826-5ad665eb2521 // indirect
 	github.com/zan8in/stringsutil v0.0.0-20220917064022-03a0bd835142 // indirect
-	go.mongodb.org/mongo-driver v1.17.6 // indirect
 	golang.org/x/exp v0.0.0-20221230185412-738e83a70c30 // indirect
 	golang.org/x/mod v0.29.0 // indirect
 	golang.org/x/oauth2 v0.13.0 // indirect
@@ -164,7 +159,7 @@ require (
 	go.etcd.io/bbolt v1.3.7 // indirect
 	go.uber.org/atomic v1.10.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/crypto v0.44.0 // indirect
+	golang.org/x/crypto v0.44.0
 	golang.org/x/net v0.47.0
 	golang.org/x/sys v0.38.0
 	golang.org/x/text v0.31.0
