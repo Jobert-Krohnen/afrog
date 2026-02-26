@@ -1,6 +1,7 @@
 package log
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/gookit/color"
@@ -36,22 +37,34 @@ func init() {
 
 func NewColor() *Color {
 	return &Color{
-		Info:      color.FgLightBlue.Render,
-		Low:       color.Cyan.Render,
-		Midium:    color.Yellow.Render,
-		High:      color.LightRed.Render,
-		Critical:  color.FgLightMagenta.Render,
-		Vulner:    color.FgLightGreen.Render,
-		Time:      color.Gray.Render,
-		Title:     color.FgLightBlue.Render,
-		Red:       color.FgLightRed.Render,
-		Green:     color.FgLightGreen.Render,
-		Extractor: color.Yellow.Render,
-		DarkGray:  color.FgDarkGray.Render,
+		Info:      wrapRender(color.FgLightBlue.Render),
+		Low:       wrapRender(color.Cyan.Render),
+		Midium:    wrapRender(color.Yellow.Render),
+		High:      wrapRender(color.LightRed.Render),
+		Critical:  wrapRender(color.FgLightMagenta.Render),
+		Vulner:    wrapRender(color.FgLightGreen.Render),
+		Time:      wrapRender(color.Gray.Render),
+		Title:     wrapRender(color.FgLightBlue.Render),
+		Red:       wrapRender(color.FgLightRed.Render),
+		Green:     wrapRender(color.FgLightGreen.Render),
+		Extractor: wrapRender(color.Yellow.Render),
+		DarkGray:  wrapRender(color.FgDarkGray.Render),
+	}
+}
+
+func wrapRender(render func(a ...any) string) func(a ...any) string {
+	return func(a ...any) string {
+		if !EnableColor {
+			return fmt.Sprint(a...)
+		}
+		return render(a...)
 	}
 }
 
 func (c *Color) GetColor(level string, log string) string {
+	if !EnableColor {
+		return log
+	}
 	level = strings.ToLower(level)
 	switch utils.SeverityMap[level] {
 	case utils.INFO:

@@ -77,6 +77,7 @@ type Options struct {
 
 	// no progress if silent is true
 	Silent bool
+	NoColor bool
 
 	// pocs to run based on severity. Possible values: info, low, medium, high, critical
 	Severity string
@@ -278,6 +279,7 @@ func NewOptions() (*Options, error) {
 		flagSet.StringVarP(&options.Json, "json", "j", "", "write to the JSON file, but it will not include the request and response content"),
 		flagSet.StringVarP(&options.JsonAll, "json-all", "ja", "", "write to the JSON file, including all vulnerability results"),
 		flagSet.BoolVarP(&options.DisableOutputHtml, "disable-output-html", "doh", false, "disable the automatic generation of HTML reports (higher priority than the -o command)"),
+		flagSet.BoolVarP(&options.NoColor, "no-color", "nc", false, "disable output content coloring (ANSI escape codes)"),
 	)
 
 	flagSet.CreateGroup("filter", "Filter",
@@ -382,6 +384,10 @@ func NewOptions() (*Options, error) {
 }
 
 func (opt *Options) VerifyOptions() error {
+
+	if opt.NoColor {
+		log.EnableColor = false
+	}
 
 	if len(opt.Validate) > 0 {
 		validator.ValidatePocFiles(opt.Validate)
