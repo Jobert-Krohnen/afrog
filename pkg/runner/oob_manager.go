@@ -2,6 +2,9 @@ package runner
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,6 +18,10 @@ type OOBManager struct {
 	mu            sync.Mutex
 	waiters       map[string]*oobWaitEntry
 	hits          map[string]oobHit
+	events        map[string][]oobEvent
+	seen          map[string]map[string]time.Time
+	maxEvents     int
+	maxSeen       int
 	lastPolledAt  map[string]time.Time
 	lastPollError map[string]time.Time
 }
@@ -35,11 +42,24 @@ type oobHit struct {
 	snippet string
 }
 
+type oobEvent struct {
+	at        time.Time
+	uniqueKey string
+	snippet   string
+	raw       string
+}
+
 type oobWaitEntry struct {
 	filter     string
 	filterType string
 	done       chan struct{}
 	refs       int
+}
+
+type oobWaitSnapshot struct {
+	key    string
+	filter string
+	done   chan struct{}
 }
 
 func NewOOBManager(ctx context.Context, adapter *oobadapter.OOBAdapter, pollInterval time.Duration, hitRetention time.Duration) *OOBManager {
@@ -55,6 +75,10 @@ func NewOOBManager(ctx context.Context, adapter *oobadapter.OOBAdapter, pollInte
 		hitRetention:  hitRetention,
 		waiters:       make(map[string]*oobWaitEntry),
 		hits:          make(map[string]oobHit),
+		events:        make(map[string][]oobEvent),
+		seen:          make(map[string]map[string]time.Time),
+		maxEvents:     50,
+		maxSeen:       200,
 		lastPolledAt:  make(map[string]time.Time),
 		lastPollError: make(map[string]time.Time),
 	}
@@ -73,7 +97,7 @@ func (m *OOBManager) Wait(filter string, filterType string, timeout time.Duratio
 	key := filterType + "|" + filter
 
 	m.mu.Lock()
-	if hit, ok := m.hits[key]; ok && time.Since(hit.lastAt) <= m.hitRetention {
+	if hit, ok := m.hits[key]; ok && m.hitRetention > 0 && time.Since(hit.lastAt) <= m.hitRetention {
 		m.mu.Unlock()
 		return true
 	}
@@ -136,6 +160,57 @@ func (m *OOBManager) HitSnapshot(filter string, filterType string) (OOBHitSnapsh
 	}, true
 }
 
+func (m *OOBManager) Evidence(filter string, filterType string, maxEvents int) string {
+	if m == nil || filter == "" {
+		return ""
+	}
+	if filterType == "" {
+		filterType = oobadapter.OOBDNS
+	}
+	if maxEvents <= 0 {
+		maxEvents = 5
+	}
+
+	key := filterType + "|" + filter
+	m.mu.Lock()
+	h, ok := m.hits[key]
+	evs := append([]oobEvent(nil), m.events[key]...)
+	m.mu.Unlock()
+	if !ok {
+		return ""
+	}
+	if m.hitRetention > 0 && time.Since(h.lastAt) > m.hitRetention {
+		return ""
+	}
+
+	meta := "protocol=" + filterType + " count=" + itoaU64(h.count) + " last_at=" + h.lastAt.UTC().Format(time.RFC3339Nano)
+	if len(evs) == 0 {
+		if strings.TrimSpace(h.snippet) == "" {
+			return meta
+		}
+		return meta + "\n" + h.snippet
+	}
+	if len(evs) > maxEvents {
+		evs = evs[len(evs)-maxEvents:]
+	}
+	var b strings.Builder
+	b.Grow(len(meta) + 32*len(evs))
+	b.WriteString(meta)
+	for _, ev := range evs {
+		b.WriteString("\n[")
+		b.WriteString(ev.at.UTC().Format(time.RFC3339Nano))
+		b.WriteString("] ")
+		s := strings.TrimSpace(ev.snippet)
+		if s == "" {
+			s = strings.TrimSpace(ev.raw)
+		}
+		if s != "" {
+			b.WriteString(s)
+		}
+	}
+	return b.String()
+}
+
 func waitClosed(ch <-chan struct{}, timeout time.Duration) bool {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
@@ -165,7 +240,7 @@ func (m *OOBManager) loop(ctx context.Context) {
 		}
 
 		now := time.Now()
-		for filterType, keys := range typeGroup {
+		for filterType, waiters := range typeGroup {
 			m.mu.Lock()
 			lastAt := m.lastPolledAt[filterType]
 			m.mu.Unlock()
@@ -173,44 +248,62 @@ func (m *OOBManager) loop(ctx context.Context) {
 				continue
 			}
 
-			body, err := m.adapter.Poll(filterType)
+			records, err := m.adapter.PollRecords(filterType)
 			m.mu.Lock()
 			m.lastPolledAt[filterType] = now
 			if err != nil {
 				m.lastPollError[filterType] = now
 			}
 			m.mu.Unlock()
-			if err != nil || len(body) == 0 {
+			if err != nil || len(records) == 0 {
 				continue
 			}
 
-			for _, key := range keys {
-				m.mu.Lock()
-				e, ok := m.waiters[key]
-				m.mu.Unlock()
-				if !ok {
+			hitKeys := make(map[string]chan struct{})
+			for _, rec := range records {
+				raw := strings.TrimSpace(rec.Raw)
+				if raw == "" {
 					continue
 				}
-				if m.adapter.Match(body, e.filterType, e.filter) {
-					now2 := time.Now()
-					snippet := oobSnippet(body, 512)
-					m.mu.Lock()
+				rawBytes := []byte(raw)
+
+				at := rec.Timestamp
+				if at.IsZero() {
+					at = time.Now().UTC()
+				} else {
+					at = at.UTC()
+				}
+
+				uniq := strings.TrimSpace(rec.UniqueKey)
+				if uniq == "" {
+					sum := sha1.Sum([]byte(raw))
+					uniq = hex.EncodeToString(sum[:])
+				}
+
+				sn := strings.TrimSpace(rec.Snippet)
+				if sn == "" {
+					sn = oobSnippet(rawBytes, 512)
+				}
+
+				for _, w := range waiters {
+					if !m.adapter.Match(rawBytes, filterType, w.filter) {
+						continue
+					}
+					if m.appendEvent(w.key, oobEvent{at: at, uniqueKey: uniq, snippet: sn, raw: raw}) {
+						hitKeys[w.key] = w.done
+					}
+				}
+			}
+
+			if len(hitKeys) > 0 {
+				m.mu.Lock()
+				for key, ch := range hitKeys {
 					if _, ok := m.waiters[key]; ok {
 						delete(m.waiters, key)
-						if h, ok := m.hits[key]; ok {
-							h.lastAt = now2
-							h.count++
-							if h.snippet == "" {
-								h.snippet = snippet
-							}
-							m.hits[key] = h
-						} else {
-							m.hits[key] = oobHit{firstAt: now2, lastAt: now2, count: 1, snippet: snippet}
-						}
-						close(e.done)
+						close(ch)
 					}
-					m.mu.Unlock()
 				}
+				m.mu.Unlock()
 			}
 		}
 
@@ -218,15 +311,83 @@ func (m *OOBManager) loop(ctx context.Context) {
 	}
 }
 
-func (m *OOBManager) snapshotWaiters() map[string][]string {
+func (m *OOBManager) appendEvent(key string, ev oobEvent) bool {
+	if m == nil || strings.TrimSpace(key) == "" || strings.TrimSpace(ev.uniqueKey) == "" {
+		return false
+	}
+	now := time.Now().UTC()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.seen == nil {
+		m.seen = make(map[string]map[string]time.Time)
+	}
+	if m.events == nil {
+		m.events = make(map[string][]oobEvent)
+	}
+	seenSet := m.seen[key]
+	if seenSet == nil {
+		seenSet = make(map[string]time.Time)
+		m.seen[key] = seenSet
+	}
+	if last, ok := seenSet[ev.uniqueKey]; ok {
+		if m.hitRetention <= 0 || now.Sub(last) <= m.hitRetention {
+			return false
+		}
+	}
+	seenSet[ev.uniqueKey] = now
+
+	m.events[key] = append(m.events[key], ev)
+	if m.maxEvents > 0 && len(m.events[key]) > m.maxEvents {
+		m.events[key] = m.events[key][len(m.events[key])-m.maxEvents:]
+	}
+
+	h := m.hits[key]
+	if h.count == 0 {
+		h.firstAt = ev.at
+		h.snippet = ev.snippet
+	}
+	h.lastAt = ev.at
+	h.count++
+	if strings.TrimSpace(h.snippet) == "" {
+		h.snippet = ev.snippet
+	}
+	m.hits[key] = h
+
+	if m.maxSeen > 0 && len(seenSet) > m.maxSeen {
+		for k, t := range seenSet {
+			if m.hitRetention > 0 && now.Sub(t) > m.hitRetention {
+				delete(seenSet, k)
+			}
+		}
+		if len(seenSet) > m.maxSeen {
+			n := len(seenSet) - m.maxSeen
+			for k := range seenSet {
+				delete(seenSet, k)
+				n--
+				if n <= 0 {
+					break
+				}
+			}
+		}
+	}
+
+	return true
+}
+
+func (m *OOBManager) snapshotWaiters() map[string][]oobWaitSnapshot {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if len(m.waiters) == 0 {
 		return nil
 	}
-	group := make(map[string][]string)
+	group := make(map[string][]oobWaitSnapshot)
 	for k, e := range m.waiters {
-		group[e.filterType] = append(group[e.filterType], k)
+		group[e.filterType] = append(group[e.filterType], oobWaitSnapshot{
+			key:    k,
+			filter: e.filter,
+			done:   e.done,
+		})
 	}
 	return group
 }
@@ -237,10 +398,15 @@ func (m *OOBManager) cleanupHits() {
 	if len(m.hits) == 0 {
 		return
 	}
+	if m.hitRetention <= 0 {
+		return
+	}
 	now := time.Now()
 	for k, h := range m.hits {
 		if now.Sub(h.lastAt) > m.hitRetention {
 			delete(m.hits, k)
+			delete(m.events, k)
+			delete(m.seen, k)
 		}
 	}
 }
@@ -253,4 +419,18 @@ func oobSnippet(body []byte, max int) string {
 		body = body[:max]
 	}
 	return string(body)
+}
+
+func itoaU64(v uint64) string {
+	if v == 0 {
+		return "0"
+	}
+	var b [20]byte
+	i := len(b)
+	for v > 0 {
+		i--
+		b[i] = byte('0' + (v % 10))
+		v /= 10
+	}
+	return string(b[i:])
 }

@@ -460,11 +460,19 @@ func (c *Checker) attachOOBEvidence() {
 		return
 	}
 	snap := c.CustomLib.lastOOBHit
-	if snap == nil || strings.TrimSpace(snap.Snippet) == "" {
+	if snap == nil {
 		return
 	}
-	meta := fmt.Sprintf("protocol=%s count=%d last_at=%s", snap.FilterType, snap.Count, snap.LastAt.Format(time.RFC3339Nano))
-	ev := meta + "\n" + snap.Snippet
+	ev := ""
+	if c.OOBMgr != nil {
+		ev = c.OOBMgr.Evidence(snap.Filter, snap.FilterType, 5)
+	} else if strings.TrimSpace(snap.Snippet) != "" {
+		meta := fmt.Sprintf("protocol=%s count=%d last_at=%s", snap.FilterType, snap.Count, snap.LastAt.Format(time.RFC3339Nano))
+		ev = meta + "\n" + snap.Snippet
+	}
+	if strings.TrimSpace(ev) == "" {
+		return
+	}
 	c.Result.Extractor = append(c.Result.Extractor, yaml.MapItem{Key: "oob_evidence", Value: ev})
 }
 

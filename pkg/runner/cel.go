@@ -195,13 +195,19 @@ func (c *CustomLib) ProgramOptions() []cel.ProgramOption {
 				if len(values) != 0 {
 					return types.NewErr("invalid arguments to 'oobEvidence'")
 				}
-				if c.lastOOBHit == nil || strings.TrimSpace(c.lastOOBHit.Snippet) == "" {
+				snap := c.lastOOBHit
+				if snap == nil {
 					return types.String("")
 				}
-				snap := c.lastOOBHit
+				if c.oobMgr != nil {
+					ev := c.oobMgr.Evidence(snap.Filter, snap.FilterType, 5)
+					return types.String(ev)
+				}
+				if strings.TrimSpace(snap.Snippet) == "" {
+					return types.String("")
+				}
 				meta := fmt.Sprintf("protocol=%s count=%d last_at=%s", snap.FilterType, snap.Count, snap.LastAt.Format(time.RFC3339Nano))
-				ev := meta + "\n" + snap.Snippet
-				return types.String(ev)
+				return types.String(meta + "\n" + snap.Snippet)
 			},
 		},
 	))
