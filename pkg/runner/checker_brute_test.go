@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/cel-go/checker/decls"
+	"github.com/zan8in/oobadapter/pkg/oobadapter"
 	"github.com/zan8in/afrog/v3/pkg/config"
 	"github.com/zan8in/afrog/v3/pkg/poc"
 	"github.com/zan8in/afrog/v3/pkg/proto"
@@ -585,18 +586,6 @@ func TestCheckerNeedsOOB(t *testing.T) {
 		want bool
 	}{
 		{
-			name: "expression_oobwait",
-			yaml: `
-id: t1
-info:
-  name: t1
-  author: test
-  severity: info
-expression: oobWait(oob, oob.ProtocolDNS, 3)
-`,
-			want: true,
-		},
-		{
 			name: "request_template",
 			yaml: `
 id: t2
@@ -625,6 +614,30 @@ info:
 expression: 1 == 1
 `,
 			want: false,
+		},
+		{
+			name: "expression_oobcheck",
+			yaml: `
+id: t4
+info:
+  name: t4
+  author: test
+  severity: info
+expression: oobCheck("dns", 3)
+`,
+			want: true,
+		},
+		{
+			name: "expression_oobchecktoken",
+			yaml: `
+id: t5
+info:
+  name: t5
+  author: test
+  severity: info
+expression: oobCheckToken("dns", 3, "abc")
+`,
+			want: true,
 		},
 	}
 
@@ -673,6 +686,91 @@ func TestAttachOOBEvidence(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected oob_evidence in extractor, got %#v", c.Result.Extractor)
+	}
+}
+
+func TestOOBCheckHelpers(t *testing.T) {
+	now := time.Now().UTC()
+	mgr := &OOBManager{
+		adapter:      &oobadapter.OOBAdapter{},
+		pollInterval: time.Second,
+		hitRetention: time.Minute,
+		waiters:      make(map[string]*oobWaitEntry),
+		hits: map[string]oobHit{
+			"dns|f1": {
+				firstAt: now.Add(-time.Second),
+				lastAt:  now,
+				count:   1,
+				snippet: "hello token-123 world",
+			},
+		},
+		lastPolledAt:  make(map[string]time.Time),
+		lastPollError: make(map[string]time.Time),
+	}
+
+	lib := NewCustomLib()
+	lib.SetOOBManager(mgr)
+	lib.SetCurrentOOB(&proto.OOB{Filter: "f1"})
+
+	env, err := lib.NewCelEnv()
+	if err != nil {
+		t.Fatalf("NewCelEnv: %v", err)
+	}
+
+	v, err := Eval(env, `oobCheck("dns", 1)`, map[string]any{})
+	if err != nil {
+		t.Fatalf("Eval oobCheck: %v", err)
+	}
+	if got, ok := v.Value().(bool); !ok || !got {
+		t.Fatalf("expected oobCheck true, got %#v", v.Value())
+	}
+
+	ev, err := Eval(env, `oobEvidence()`, map[string]any{})
+	if err != nil {
+		t.Fatalf("Eval oobEvidence: %v", err)
+	}
+	s, ok := ev.Value().(string)
+	if !ok || !strings.Contains(s, "protocol=dns") || !strings.Contains(s, "token-123") {
+		t.Fatalf("unexpected oobEvidence: %#v", ev.Value())
+	}
+
+	c := &Checker{
+		VariableMap: map[string]any{},
+		Result:      &result.Result{},
+		CustomLib:   lib,
+	}
+	c.attachOOBEvidence()
+	found := false
+	for _, it := range c.Result.Extractor {
+		if it.Key == "oob_evidence" {
+			s, ok := it.Value.(string)
+			if !ok {
+				t.Fatalf("expected string oob_evidence, got %#v", it.Value)
+			}
+			if !strings.Contains(s, "protocol=dns") || !strings.Contains(s, "token-123") {
+				t.Fatalf("unexpected attached oob_evidence: %q", s)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected attached oob_evidence, got %#v", c.Result.Extractor)
+	}
+
+	v2, err := Eval(env, `oobCheckToken("dns", 1, "token-123")`, map[string]any{})
+	if err != nil {
+		t.Fatalf("Eval oobCheckToken: %v", err)
+	}
+	if got, ok := v2.Value().(bool); !ok || !got {
+		t.Fatalf("expected oobCheckToken true, got %#v", v2.Value())
+	}
+
+	v3, err := Eval(env, `oobCheckToken("dns", 1, "notfound")`, map[string]any{})
+	if err != nil {
+		t.Fatalf("Eval oobCheckToken mismatch: %v", err)
+	}
+	if got, ok := v3.Value().(bool); !ok || got {
+		t.Fatalf("expected oobCheckToken false, got %#v", v3.Value())
 	}
 }
 

@@ -298,15 +298,6 @@ func validateSingleExpression(expression, filePath, content, context string) []V
 		})
 	}
 
-	// 验证oobWait函数调用
-	if err := validateOobWait(expr); err != nil {
-		errors = append(errors, ValidationError{
-			File:    filePath,
-			Line:    lineNum,
-			Message: fmt.Sprintf("%s error: %v", context, err),
-		})
-	}
-
 	// 验证函数调用语法
 	if err := validateFunctionCalls(expr); err != nil {
 		errors = append(errors, ValidationError{
@@ -408,60 +399,6 @@ func validateResponseStatus(expr string) error {
 	return nil
 }
 
-// validateOobWait 验证oobWait函数
-func validateOobWait(expr string) error {
-	if !strings.Contains(expr, "oobWait") {
-		return nil
-	}
-
-	// 检查正确的3参数格式
-	oobPattern := regexp.MustCompile(`oobWait\s*\(\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\s*\)`)
-	matches := oobPattern.FindAllStringSubmatch(expr, -1)
-
-	// 检查错误的参数数量
-	wrongParamPattern := regexp.MustCompile(`oobWait\s*\(([^)]*)\)`)
-	wrongMatches := wrongParamPattern.FindAllStringSubmatch(expr, -1)
-
-	for _, wrongMatch := range wrongMatches {
-		if len(wrongMatch) >= 2 {
-			params := strings.Split(wrongMatch[1], ",")
-			paramCount := 0
-			for _, param := range params {
-				if strings.TrimSpace(param) != "" {
-					paramCount++
-				}
-			}
-
-			if paramCount != 3 {
-				return fmt.Errorf("oobWait函数需要3个参数(oob, protocol, timeout)，但提供了%d个参数", paramCount)
-			}
-		}
-	}
-
-	// 验证正确格式的参数内容
-	for _, match := range matches {
-		if len(match) >= 4 {
-			protocol := strings.TrimSpace(match[2])
-			timeout := strings.TrimSpace(match[3])
-
-			// 验证协议类型
-			trimmed := strings.TrimSpace(protocol)
-			unquoted := strings.Trim(trimmed, `"'`)
-			ul := strings.ToLower(unquoted)
-			if !strings.Contains(protocol, "oob.Protocol") && ul != "dns" && ul != "http" {
-				return fmt.Errorf("oobWait第二个参数应为协议类型(如oob.ProtocolHTTP/oob.ProtocolDNS 或 \"dns\"/\"http\")，当前为'%s'", protocol)
-			}
-
-			// 验证超时参数是数字
-			if !regexp.MustCompile(`^\d+$`).MatchString(timeout) {
-				return fmt.Errorf("oobWait第三个参数应为数字(超时时间)，当前为'%s'", timeout)
-			}
-		}
-	}
-
-	return nil
-}
-
 // validateFunctionCalls 验证函数调用
 func validateFunctionCalls(expr string) error {
 	// CEL内置函数和afrog扩展函数
@@ -483,7 +420,7 @@ func validateFunctionCalls(expr string) error {
 		"randomInt", "randomLowercase", "sleep",
 		"year", "shortyear", "month", "day", "timestamp_second",
 		"versionCompare", "ysoserial", "aesCBC", "repeat", "decimal", "length",
-		"oobWait", "wait", "jndi",
+		"oobCheck", "oobCheckToken", "oobEvidence", "wait", "jndi",
 	}
 
 	// 先移除字符串字面量，避免误判字符串内容为函数调用

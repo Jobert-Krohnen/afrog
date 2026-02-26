@@ -685,10 +685,14 @@ func MigrateLegacyPocs(root string) (MigrateReport, error) {
 }
 
 var (
-	reOobCheckCall = regexp.MustCompile(`\boobCheck\s*\(`)
-	reOobDNSTpl    = regexp.MustCompile(`\{\{\s*oobDNS\s*\}\}`)
-	reOobHTTPTpl   = regexp.MustCompile(`\{\{\s*oobHTTP\s*\}\}`)
-	reOobFilterTpl = regexp.MustCompile(`\{\{\s*oobFilter\s*\}\}`)
+	reOobWaitObjCall       = regexp.MustCompile(`\boobWait\s*\(\s*oob\s*,\s*`)
+	reOobCheckObjCall      = regexp.MustCompile(`\boobCheck\s*\(\s*oob\s*,\s*`)
+	reOobCheckTokenObjCall = regexp.MustCompile(`\boobCheckToken\s*\(\s*oob\s*,\s*`)
+	reOobCheckLeadSpace    = regexp.MustCompile(`\boobCheck\s*\(\s+`)
+	reOobCheckTokenLeadSpace = regexp.MustCompile(`\boobCheckToken\s*\(\s+`)
+	reOobDNSTpl            = regexp.MustCompile(`\{\{\s*oobDNS\s*\}\}`)
+	reOobHTTPTpl           = regexp.MustCompile(`\{\{\s*oobHTTP\s*\}\}`)
+	reOobFilterTpl         = regexp.MustCompile(`\{\{\s*oobFilter\s*\}\}`)
 
 	reWordOobDNS    = regexp.MustCompile(`\boobDNS\b`)
 	reWordOobHTTP   = regexp.MustCompile(`\boobHTTP\b`)
@@ -703,8 +707,36 @@ func migrateFile(path string) (changed bool, changes int, err error) {
 	orig := string(b)
 	s := orig
 
-	if reOobCheckCall.MatchString(s) {
-		s2 := reOobCheckCall.ReplaceAllString(s, "oobWait(")
+	if reOobWaitObjCall.MatchString(s) {
+		s2 := reOobWaitObjCall.ReplaceAllString(s, "oobCheck(")
+		if s2 != s {
+			changes++
+			s = s2
+		}
+	}
+	if reOobCheckObjCall.MatchString(s) {
+		s2 := reOobCheckObjCall.ReplaceAllString(s, "oobCheck(")
+		if s2 != s {
+			changes++
+			s = s2
+		}
+	}
+	if reOobCheckTokenObjCall.MatchString(s) {
+		s2 := reOobCheckTokenObjCall.ReplaceAllString(s, "oobCheckToken(")
+		if s2 != s {
+			changes++
+			s = s2
+		}
+	}
+	if reOobCheckLeadSpace.MatchString(s) {
+		s2 := reOobCheckLeadSpace.ReplaceAllString(s, "oobCheck(")
+		if s2 != s {
+			changes++
+			s = s2
+		}
+	}
+	if reOobCheckTokenLeadSpace.MatchString(s) {
+		s2 := reOobCheckTokenLeadSpace.ReplaceAllString(s, "oobCheckToken(")
 		if s2 != s {
 			changes++
 			s = s2
@@ -803,6 +835,12 @@ func stripLegacyOOBSet(s string) (string, int) {
 		case "oobHTTP":
 			return val == "oob.HTTP"
 		case "oobFilter":
+			return val == "oob.Filter"
+		case "oob.DNS":
+			return val == "oob.DNS"
+		case "oob.HTTP":
+			return val == "oob.HTTP"
+		case "oob.Filter":
 			return val == "oob.Filter"
 		default:
 			return false

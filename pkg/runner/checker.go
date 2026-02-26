@@ -90,7 +90,9 @@ func checkerContainsOOBToken(s string) bool {
 		return false
 	}
 	l := strings.ToLower(s)
-	return strings.Contains(l, "oobwait(") ||
+	return strings.Contains(l, "oobcheck(") ||
+		strings.Contains(l, "oobchecktoken(") ||
+		strings.Contains(l, "oobevidence(") ||
 		strings.Contains(l, "{{oob") ||
 		strings.Contains(l, "{{ oob") ||
 		strings.Contains(l, "oob_") ||
@@ -180,6 +182,8 @@ func (c *Checker) Check(target string, pocItem *poc.Poc) (err error) {
 	c.CustomLib.UpdateCompileOption("oob_dns", decls.String)
 	c.CustomLib.UpdateCompileOption("oob_http", decls.String)
 	c.CustomLib.UpdateCompileOption("oob_filter", decls.String)
+	c.CustomLib.SetCurrentOOB(o)
+	c.CustomLib.lastOOBHit = nil
 
 	if len(pocItem.Set) > 0 {
 		c.UpdateVariableMap(pocItem.Set)

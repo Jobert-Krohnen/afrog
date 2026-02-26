@@ -24,12 +24,28 @@ type CustomLib struct {
 	varTypes           map[string]*exprpb.Type
 	ruleFuncs          map[string]bool
 	oobMgr             *OOBManager
+	currentOOB         *proto.OOB
 	lastOOBHit         *OOBHitSnapshot
 }
 
 func (c *CustomLib) CompileOptions() []cel.EnvOption {
 	opts := make([]cel.EnvOption, 0, len(c.baseEnvOptions)+2)
 	opts = append(opts, c.baseEnvOptions...)
+
+	opts = append(opts, cel.Declarations(
+		decls.NewFunction("oobCheck",
+			decls.NewOverload("oobCheck_string_int",
+				[]*exprpb.Type{decls.String, decls.Int},
+				decls.Bool)),
+		decls.NewFunction("oobCheckToken",
+			decls.NewOverload("oobCheckToken_string_int_string",
+				[]*exprpb.Type{decls.String, decls.Int, decls.String},
+				decls.Bool)),
+		decls.NewFunction("oobEvidence",
+			decls.NewOverload("oobEvidence",
+				[]*exprpb.Type{},
+				decls.String)),
+	))
 
 	if len(c.varTypes) > 0 {
 		keys := make([]string, 0, len(c.varTypes))
@@ -90,30 +106,27 @@ func (c *CustomLib) ProgramOptions() []cel.ProgramOption {
 
 	opts = append(opts, cel.Functions(
 		&functions.Overload{
-			Operator: "oobWait_oob_string_int",
-			Function: func(values ...ref.Val) ref.Val {
-				if len(values) != 3 {
-					return types.NewErr("invalid arguments to 'oobWait'")
-				}
-				oob, ok := values[0].Value().(*proto.OOB)
+			Operator: "oobCheck_string_int",
+			Binary: func(lhs ref.Val, rhs ref.Val) ref.Val {
+				filterType, ok := lhs.(types.String)
 				if !ok {
-					return types.ValOrErr(values[0], "unexpected type '%v' passed to oobWait", values[0].Type())
+					return types.ValOrErr(lhs, "unexpected type '%v' passed to oobCheck", lhs.Type())
 				}
-				filterType, ok := values[1].(types.String)
+				timeout, ok := rhs.(types.Int)
 				if !ok {
-					return types.ValOrErr(values[1], "unexpected type '%v' passed to oobWait", values[1].Type())
-				}
-				timeout, ok := values[2].(types.Int)
-				if !ok {
-					return types.ValOrErr(values[2], "unexpected type '%v' passed to oobWait", values[2].Type())
+					return types.ValOrErr(rhs, "unexpected type '%v' passed to oobCheck", rhs.Type())
 				}
 
 				mgr := c.oobMgr
+				oob := c.currentOOB
 				if mgr == nil || oob == nil || strings.TrimSpace(oob.Filter) == "" {
 					return types.Bool(false)
 				}
 
 				ft := strings.TrimSpace(string(filterType))
+				if ft == "" {
+					ft = "dns"
+				}
 				to := int64(timeout)
 				if to == 0 {
 					to = 3
@@ -125,6 +138,70 @@ func (c *CustomLib) ProgramOptions() []cel.ProgramOption {
 					}
 				}
 				return types.Bool(waitOK)
+			},
+		},
+		&functions.Overload{
+			Operator: "oobCheckToken_string_int_string",
+			Function: func(values ...ref.Val) ref.Val {
+				if len(values) != 3 {
+					return types.NewErr("invalid arguments to 'oobCheckToken'")
+				}
+				filterType, ok := values[0].(types.String)
+				if !ok {
+					return types.ValOrErr(values[0], "unexpected type '%v' passed to oobCheckToken", values[0].Type())
+				}
+				timeout, ok := values[1].(types.Int)
+				if !ok {
+					return types.ValOrErr(values[1], "unexpected type '%v' passed to oobCheckToken", values[1].Type())
+				}
+				token, ok := values[2].(types.String)
+				if !ok {
+					return types.ValOrErr(values[2], "unexpected type '%v' passed to oobCheckToken", values[2].Type())
+				}
+
+				mgr := c.oobMgr
+				oob := c.currentOOB
+				if mgr == nil || oob == nil || strings.TrimSpace(oob.Filter) == "" {
+					return types.Bool(false)
+				}
+
+				ft := strings.TrimSpace(string(filterType))
+				if ft == "" {
+					ft = "dns"
+				}
+				to := int64(timeout)
+				if to == 0 {
+					to = 3
+				}
+				waitOK := mgr.Wait(oob.Filter, ft, time.Second*time.Duration(to))
+				if !waitOK {
+					return types.Bool(false)
+				}
+				snap, ok2 := mgr.HitSnapshot(oob.Filter, ft)
+				if !ok2 {
+					return types.Bool(false)
+				}
+				tok := strings.TrimSpace(string(token))
+				if tok != "" && !strings.Contains(snap.Snippet, tok) {
+					return types.Bool(false)
+				}
+				c.lastOOBHit = &snap
+				return types.Bool(true)
+			},
+		},
+		&functions.Overload{
+			Operator: "oobEvidence",
+			Function: func(values ...ref.Val) ref.Val {
+				if len(values) != 0 {
+					return types.NewErr("invalid arguments to 'oobEvidence'")
+				}
+				if c.lastOOBHit == nil || strings.TrimSpace(c.lastOOBHit.Snippet) == "" {
+					return types.String("")
+				}
+				snap := c.lastOOBHit
+				meta := fmt.Sprintf("protocol=%s count=%d last_at=%s", snap.FilterType, snap.Count, snap.LastAt.Format(time.RFC3339Nano))
+				ev := meta + "\n" + snap.Snippet
+				return types.String(ev)
 			},
 		},
 	))
@@ -246,6 +323,10 @@ func (c *CustomLib) UpdateCompileOption(k string, t *exprpb.Type) {
 
 func (c *CustomLib) SetOOBManager(mgr *OOBManager) {
 	c.oobMgr = mgr
+}
+
+func (c *CustomLib) SetCurrentOOB(oob *proto.OOB) {
+	c.currentOOB = oob
 }
 
 func (c *CustomLib) Reset() {

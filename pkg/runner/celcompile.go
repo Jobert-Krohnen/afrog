@@ -211,10 +211,6 @@ var (
 				decls.NewInstanceOverload("reverse_jndi_int",
 					[]*exprpb.Type{decls.Any, decls.Int},
 					decls.Bool)),
-			decls.NewFunction("oobWait",
-				decls.NewOverload("oobWait_oob_string_int",
-					[]*exprpb.Type{decls.Any, decls.String, decls.Int},
-					decls.Bool)),
 			// other
 			decls.NewFunction("sleep",
 				decls.NewOverload("sleep_int", []*exprpb.Type{decls.Int},
