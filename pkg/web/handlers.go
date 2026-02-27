@@ -24,6 +24,83 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+func normalizeExtractor(raw string) any {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+
+	type mapItem struct {
+		Key   any `json:"Key"`
+		Value any `json:"Value"`
+	}
+	var items []mapItem
+	if err := json.Unmarshal([]byte(raw), &items); err == nil && len(items) > 0 {
+		out := make(map[string]any, len(items))
+		for _, it := range items {
+			k := strings.TrimSpace(fmt.Sprint(it.Key))
+			if k == "" {
+				continue
+			}
+			out[k] = it.Value
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(raw), &obj); err == nil && len(obj) > 0 {
+		return obj
+	}
+
+	var v any
+	if err := json.Unmarshal([]byte(raw), &v); err == nil {
+		return v
+	}
+	return raw
+}
+
+func readYamlFromWorkspaceConfigByID(pocId string) ([]byte, error) {
+	pocId = strings.TrimSpace(pocId)
+	if pocId == "" {
+		return nil, fmt.Errorf("empty pocId")
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	roots := []string{
+		filepath.Join(wd, ".config", "afrog", "pocs"),
+		filepath.Join(wd, ".config", "afrog", "pocs-curated"),
+		filepath.Join(wd, ".config", "afrog", "pocs-my"),
+	}
+	for _, root := range roots {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			continue
+		}
+		if fi, statErr := os.Stat(root); statErr != nil || !fi.IsDir() {
+			continue
+		}
+		files, walkErr := poc.LocalWalkFiles(root)
+		if walkErr != nil {
+			continue
+		}
+		for _, fp := range files {
+			pm, metaErr := poc.LocalReadPocMetaByPath(fp)
+			if metaErr != nil || strings.TrimSpace(pm.Id) == "" {
+				continue
+			}
+			if strings.TrimSpace(pm.Id) != pocId {
+				continue
+			}
+			return os.ReadFile(fp)
+		}
+	}
+	return nil, fmt.Errorf("poc with id '%s' not found in workspace config", pocId)
+}
+
 func loginHandler(w http.ResponseWriter, r *http.Request) {
 	// 所有API返回JSON
 	w.Header().Set("Content-Type", "application/json")
@@ -534,12 +611,7 @@ func reportsHandler(w http.ResponseWriter, r *http.Request) {
 		if expandExtractor {
 			raw := strings.TrimSpace(it.Extractor)
 			if raw != "" {
-				var v any
-				if json.Unmarshal([]byte(raw), &v) == nil {
-					item.Extractor = v
-				} else {
-					item.Extractor = raw
-				}
+				item.Extractor = normalizeExtractor(raw)
 			}
 		}
 		respItems = append(respItems, item)
@@ -641,12 +713,7 @@ func reportsDetailHandler(w http.ResponseWriter, r *http.Request) {
 	if expandExtractor {
 		raw := strings.TrimSpace(row.Extractor)
 		if raw != "" {
-			var v any
-			if json.Unmarshal([]byte(raw), &v) == nil {
-				item.Extractor = v
-			} else {
-				item.Extractor = raw
-			}
+			item.Extractor = normalizeExtractor(raw)
 		}
 	}
 
@@ -695,10 +762,13 @@ func pocDetailHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 通过POC ID查找原始YAML内容
-	yamlContent, err := poc.FindPocYamlById(pocId)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("POC YAML not found: %v", err), http.StatusNotFound)
-		return
+	yamlContent, err := pocsrepo.ReadYamlByID(pocId)
+	if err != nil || yamlContent == nil {
+		yamlContent, err = readYamlFromWorkspaceConfigByID(pocId)
+		if err != nil || yamlContent == nil {
+			http.Error(w, fmt.Sprintf("POC YAML not found: %v", err), http.StatusNotFound)
+			return
+		}
 	}
 
 	// 返回YAML内容
