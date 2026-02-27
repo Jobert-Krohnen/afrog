@@ -76,9 +76,19 @@ jobs:
             git clone --depth 1 --branch "${ref}" "${AFROGWEB_REPO_URL}" _afrogweb_tmp
           }
 
-          if try_clone "${REF_PRIMARY}" >/dev/null 2>&1; then
+          clone_with_log() {
+            local ref="$1"
+            local out
+            out="$(try_clone "${ref}" 2>&1)" && return 0
+            out="$(echo "${out}" | sed -E 's#https://x-access-token:[^@]+@github.com#https://x-access-token:***@github.com#g')"
+            echo "[afrogweb] clone failed for ref=${ref}" >&2
+            echo "${out}" | tail -n 80 >&2
+            return 1
+          }
+
+          if clone_with_log "${REF_PRIMARY}"; then
             echo "AFROGWEB_REF_EFFECTIVE=${REF_PRIMARY}"
-          elif [ "${REF_PRIMARY}" != "${REF_FALLBACK}" ] && try_clone "${REF_FALLBACK}" >/dev/null 2>&1; then
+          elif [ "${REF_PRIMARY}" != "${REF_FALLBACK}" ] && clone_with_log "${REF_FALLBACK}"; then
             echo "AFROGWEB_REF_EFFECTIVE=${REF_FALLBACK}"
           else
             rm -rf _afrogweb_tmp || true
