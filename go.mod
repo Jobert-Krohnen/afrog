@@ -35,7 +35,7 @@ require (
 	github.com/zan8in/goflags v0.0.0-20230204144650-0745934af58a
 	github.com/zan8in/gologger v0.0.0-20220917062627-c34a83c0a373
 	github.com/zan8in/goupdate v1.0.0
-	github.com/zan8in/oobadapter v2.0.0+incompatible
+	github.com/zan8in/oobadapter v1.1.0
 	github.com/zan8in/pins v0.0.0-20240530014940-e9ebb462913a
 	github.com/zan8in/rawhttp v0.0.0-20230318132449-31532db674af
 	github.com/zan8in/retryablehttp v1.0.0
@@ -165,5 +165,3 @@ require (
 	golang.org/x/text v0.31.0
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect
 )
-
-replace github.com/zan8in/oobadapter => ./oobadapter
