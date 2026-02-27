@@ -34,6 +34,7 @@ urls*
 _afrog_smoke
 _afrog_pid
 web_smoke.log
+/main
 
 *pocs/afrog-pocs/e-privbox/
 *pocs/afrog-pocs/a-private/
