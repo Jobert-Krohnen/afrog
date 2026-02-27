@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	Version     = "3.3.8"
+	Version     = "3.3.9"
 	ProjectName = "Afrog"
 	Codename    = "Lightweight, Fast, and Direct to the Flaw."
 	LineWidth   = 56
