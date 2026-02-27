@@ -51,47 +51,85 @@ jobs:
           go mod download
 
       - name: Build and copy afrogweb assets
+        env:
+          AFROGWEB_TOKEN: ${{ secrets.AFROGWEB_TOKEN }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
         run: |
           set -euo pipefail
 
-          AFROGWEB_REPO_URL="https://x-access-token:${{ secrets.AFROGWEB_TOKEN }}@github.com/zan8in/afrogweb.git"
-          AFROGWEB_REF_EFFECTIVE="${AFROGWEB_REF}"
+          WEB_ASSETS_READY=false
+
+          AFROGWEB_REPO_URL="https://github.com/zan8in/afrogweb.git"
+          if [ -n "${AFROGWEB_TOKEN:-}" ]; then
+            AFROGWEB_REPO_URL="https://x-access-token:${AFROGWEB_TOKEN}@github.com/zan8in/afrogweb.git"
+          fi
+
+          REF_PRIMARY="${AFROGWEB_REF}"
           if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ -n "${GITHUB_REF_NAME:-}" ]; then
-            if git ls-remote --exit-code --tags "${AFROGWEB_REPO_URL}" "refs/tags/${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-              AFROGWEB_REF_EFFECTIVE="${GITHUB_REF_NAME}"
+            REF_PRIMARY="${GITHUB_REF_NAME}"
+          fi
+          REF_FALLBACK="${AFROGWEB_REF}"
+
+          try_clone() {
+            local ref="$1"
+            rm -rf _afrogweb_tmp
+            git clone --depth 1 --branch "${ref}" "${AFROGWEB_REPO_URL}" _afrogweb_tmp
+          }
+
+          if try_clone "${REF_PRIMARY}" >/dev/null 2>&1; then
+            echo "AFROGWEB_REF_EFFECTIVE=${REF_PRIMARY}"
+          elif [ "${REF_PRIMARY}" != "${REF_FALLBACK}" ] && try_clone "${REF_FALLBACK}" >/dev/null 2>&1; then
+            echo "AFROGWEB_REF_EFFECTIVE=${REF_FALLBACK}"
+          else
+            rm -rf _afrogweb_tmp || true
+          fi
+
+          if [ -d "_afrogweb_tmp" ]; then
+            cd _afrogweb_tmp
+            node -v
+            npm -v
+            git rev-parse HEAD
+            if [ -d "static/docs" ] && [ -d "../docs" ] && [ -z "$(ls -A static/docs 2>/dev/null)" ]; then
+              cp -R ../docs/* static/docs/ || true
+            fi
+            if [ -f package-lock.json ]; then
+              npm ci
+            else
+              npm install
+            fi
+            npm run build
+            cd ..
+
+            rm -rf _afrogweb_new
+            mkdir -p _afrogweb_new
+            cp -r _afrogweb_tmp/build/* _afrogweb_new/
+            rm -rf _afrogweb_tmp
+
+            if [ -d "_afrogweb_new/_app/immutable/entry" ] && [ $(ls _afrogweb_new/_app/immutable/entry/*.js 2>/dev/null | wc -l) -gt 0 ]; then
+              rm -rf pkg/web/webpath
+              mkdir -p pkg/web/webpath
+              cp -r _afrogweb_new/* pkg/web/webpath/
+              WEB_ASSETS_READY=true
+              echo "afrogweb assets copied successfully"
+            else
+              echo "afrogweb build or copy failed: no JS files in entry/" >&2
+            fi
+            rm -rf _afrogweb_new
+          fi
+
+          echo "WEB_ASSETS_READY=${WEB_ASSETS_READY}" >> "${GITHUB_ENV}"
+
+          if [ "${WEB_ASSETS_READY}" != "true" ]; then
+            if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ "${DRY_RUN:-}" = "true" ]; then
+              echo "afrogweb assets not available (dry_run=true); continuing with placeholder assets"
+            else
+              echo "afrogweb assets not available. Ensure secrets.AFROGWEB_TOKEN has read access to zan8in/afrogweb." >&2
+              exit 1
             fi
           fi
-          echo "AFROGWEB_REF_EFFECTIVE=${AFROGWEB_REF_EFFECTIVE}"
-          git clone --depth 1 --branch "${AFROGWEB_REF_EFFECTIVE}" "${AFROGWEB_REPO_URL}" _afrogweb_tmp
-
-          cd _afrogweb_tmp
-          node -v
-          npm -v
-          git rev-parse HEAD
-          if [ -d "static/docs" ] && [ -d "../docs" ] && [ -z "$(ls -A static/docs 2>/dev/null)" ]; then
-            cp -R ../docs/* static/docs/ || true
-          fi
-          if [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm install
-          fi
-          npm run build
-          cd ..
-
-          rm -rf pkg/web/webpath
-          mkdir -p pkg/web/webpath
-          cp -r _afrogweb_tmp/build/* pkg/web/webpath/
-
-          rm -rf _afrogweb_tmp
-
-          if [ ! -d "pkg/web/webpath/_app/immutable/entry" ] || [ $(ls pkg/web/webpath/_app/immutable/entry/*.js 2>/dev/null | wc -l) -eq 0 ]; then
-            echo "afrogweb build or copy failed: no JS files in entry/" >&2
-            exit 1
-          fi
-          echo "afrogweb assets copied successfully"
 
       - name: Verify embedded web assets
+        if: env.WEB_ASSETS_READY == 'true'
         run: |
           set -euo pipefail
           ls -la pkg/web/webpath || (echo "missing webpath directory" && exit 1)
@@ -103,6 +141,7 @@ jobs:
           [ "$CHUNKS" -gt 0 ] || (echo "missing chunks js" && exit 1)
 
       - name: Detect unmatched web assets (embed coverage guard)
+        if: env.WEB_ASSETS_READY == 'true'
         run: |
           set -euo pipefail
           TOP_EXTS='html|ico|png|svg|webmanifest|json|txt'
@@ -184,6 +223,7 @@ jobs:
       #     fi
 
       - name: Web smoke test (-web mode assets)
+        if: env.WEB_ASSETS_READY == 'true'
         env:
           CGO_ENABLED: 0
         run: |
