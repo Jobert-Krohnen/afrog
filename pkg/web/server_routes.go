@@ -75,7 +75,13 @@ func setupHandler() (http.Handler, error) {
 		return nil, fmt.Errorf("unable to load embedded web assets: %w", err)
 	}
 
-	spa := newSPAHandler(buildRoot, GetWebpathIndexPath())
+	indexPath := GetWebpathIndexPath()
+	if _, statErr := fs.Stat(buildRoot, indexPath); statErr != nil {
+		if _, placeholderErr := fs.Stat(buildRoot, "placeholder.html"); placeholderErr == nil {
+			indexPath = "placeholder.html"
+		}
+	}
+	spa := newSPAHandler(buildRoot, indexPath)
 
 	// 常见特殊文件（可选，直出便于日志与缓存控制）
 	r.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
