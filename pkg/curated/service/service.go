@@ -159,7 +159,7 @@ func (s *Service) Mount(ctx context.Context) (string, error) {
 		checkErr = s.checkRemoteAccess(ctx, dir, st.ManifestID)
 		if checkErr != nil && isCuratedAuthErrorMessage(checkErr.Error()) {
 			_ = s.purgeCuratedLocal(dir)
-			_ = s.updateRuntimeDir("", st.ManifestID, normalizeRuntimeError(checkErr))
+			_ = s.updateRuntimeCheck("", st.ManifestID, normalizeRuntimeError(checkErr))
 			return "", checkErr
 		}
 	}
@@ -177,7 +177,7 @@ func (s *Service) Mount(ctx context.Context) (string, error) {
 		updateErr = s.Update(ctx, uopts)
 		if updateErr != nil && isCuratedAuthErrorMessage(updateErr.Error()) {
 			_ = s.purgeCuratedLocal(dir)
-			_ = s.updateRuntimeDir("", st.ManifestID, normalizeRuntimeError(updateErr))
+			_ = s.updateRuntimeCheck("", st.ManifestID, normalizeRuntimeError(updateErr))
 			return "", updateErr
 		}
 	}
@@ -301,7 +301,7 @@ func configDir() (string, error) {
 	return dir, nil
 }
 
-func (s *Service) updateRuntimeDir(dir string, manifestID string, msg string) error {
+func (s *Service) updateRuntimeCheck(dir string, manifestID string, msg string) error {
 	cfgDir, err := configDir()
 	if err != nil {
 		return err
@@ -314,8 +314,33 @@ func (s *Service) updateRuntimeDir(dir string, manifestID string, msg string) er
 	now := time.Now()
 	rs.CurrentDir = dir
 	rs.LastCheckAt = now
-	rs.LastUpdateAt = now
 	rs.LastError = strings.TrimSpace(msg)
+	if strings.TrimSpace(manifestID) != "" {
+		rs.ManifestID = strings.TrimSpace(manifestID)
+	}
+	rs.CuratedChannel = strings.TrimSpace(s.cfg.Channel)
+	data, err := json.MarshalIndent(rs, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
+}
+
+func (s *Service) updateRuntimeUpdated(dir string, manifestID string) error {
+	cfgDir, err := configDir()
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(cfgDir, "curated-state.json")
+	rs, _ := readRuntime(path)
+	if rs == nil {
+		rs = &runtimeState{}
+	}
+	now := time.Now()
+	rs.CurrentDir = strings.TrimSpace(dir)
+	rs.LastCheckAt = now
+	rs.LastUpdateAt = now
+	rs.LastError = ""
 	if strings.TrimSpace(manifestID) != "" {
 		rs.ManifestID = strings.TrimSpace(manifestID)
 	}
@@ -404,7 +429,7 @@ func (s *Service) installAFCP(curatedDir string, opts UpdateOptions) error {
 	now := time.Now()
 	keyB, err := base64.StdEncoding.DecodeString(strings.TrimSpace(opts.ContentKeyB64))
 	if err != nil {
-		_ = s.updateRuntimeDir(curatedDir, opts.ManifestID, err.Error())
+		_ = s.updateRuntimeCheck(curatedDir, opts.ManifestID, err.Error())
 		return err
 	}
 
@@ -412,14 +437,14 @@ func (s *Service) installAFCP(curatedDir string, opts UpdateOptions) error {
 	staging := filepath.Join(parent, fmt.Sprintf(".pocs-curated-staging-%d", now.UnixNano()))
 	_ = os.RemoveAll(staging)
 	if err := os.MkdirAll(staging, 0755); err != nil {
-		_ = s.updateRuntimeDir(curatedDir, opts.ManifestID, err.Error())
+		_ = s.updateRuntimeCheck(curatedDir, opts.ManifestID, err.Error())
 		return err
 	}
 
 	hdr, err := pack.DecryptAFCP1ToDir(strings.TrimSpace(opts.AFCPPath), staging, keyB)
 	if err != nil {
 		_ = os.RemoveAll(staging)
-		_ = s.updateRuntimeDir(curatedDir, opts.ManifestID, err.Error())
+		_ = s.updateRuntimeCheck(curatedDir, opts.ManifestID, err.Error())
 		return err
 	}
 
@@ -433,7 +458,7 @@ func (s *Service) installAFCP(curatedDir string, opts UpdateOptions) error {
 	if _, err := os.Stat(curatedDir); err == nil {
 		if err := os.Rename(curatedDir, backup); err != nil {
 			_ = os.RemoveAll(staging)
-			_ = s.updateRuntimeDir(curatedDir, manifestID, err.Error())
+			_ = s.updateRuntimeCheck(curatedDir, manifestID, err.Error())
 			return err
 		}
 	}
@@ -443,21 +468,18 @@ func (s *Service) installAFCP(curatedDir string, opts UpdateOptions) error {
 			_ = os.Rename(backup, curatedDir)
 		}
 		_ = os.RemoveAll(staging)
-		_ = s.updateRuntimeDir(curatedDir, manifestID, err.Error())
+		_ = s.updateRuntimeCheck(curatedDir, manifestID, err.Error())
 		return err
 	}
 
 	_ = os.RemoveAll(backup)
-	if err := s.updateRuntimeDir(curatedDir, manifestID, ""); err != nil {
-		return err
-	}
-	return nil
+	return s.updateRuntimeUpdated(curatedDir, manifestID)
 }
 
 func (s *Service) updateFromRemote(ctx context.Context, curatedDir string, opts UpdateOptions) error {
 	endpoint := strings.TrimSpace(s.cfg.Endpoint)
 	if endpoint == "" {
-		return s.updateRuntimeDir(curatedDir, opts.ManifestID, "")
+		return s.updateRuntimeCurrentDir(curatedDir, opts.ManifestID, "")
 	}
 	cfgDir, err := configDir()
 	if err != nil {
@@ -468,21 +490,21 @@ func (s *Service) updateFromRemote(ctx context.Context, curatedDir string, opts 
 	license := strings.TrimSpace(s.cfg.LicenseKey)
 	if (err != nil || as == nil) && license != "" {
 		if loginErr := s.Login(ctx, license); loginErr != nil {
-			_ = s.updateRuntimeDir(curatedDir, opts.ManifestID, normalizeRuntimeError(loginErr))
+			_ = s.updateRuntimeCheck(curatedDir, opts.ManifestID, normalizeRuntimeError(loginErr))
 			return loginErr
 		}
 		as, err = readAuth(authPath)
 	}
 	if err == nil && as != nil && license != "" && strings.TrimSpace(as.LicenseKey) != "" && strings.TrimSpace(as.LicenseKey) != license {
 		if loginErr := s.Login(ctx, license); loginErr != nil {
-			_ = s.updateRuntimeDir(curatedDir, opts.ManifestID, normalizeRuntimeError(loginErr))
+			_ = s.updateRuntimeCheck(curatedDir, opts.ManifestID, normalizeRuntimeError(loginErr))
 			return loginErr
 		}
 		as, err = readAuth(authPath)
 	}
 	if err != nil || as == nil {
 		errOut := errors.New("not logged in")
-		_ = s.updateRuntimeDir(curatedDir, opts.ManifestID, normalizeRuntimeError(errOut))
+		_ = s.updateRuntimeCheck(curatedDir, opts.ManifestID, normalizeRuntimeError(errOut))
 		return errOut
 	}
 	if as.DeviceFingerprint == "" {
@@ -496,7 +518,7 @@ func (s *Service) updateFromRemote(ctx context.Context, curatedDir string, opts 
 		if strings.TrimSpace(as.AccessToken) == "" || (!as.AccessExpiresAt.IsZero() && now.After(as.AccessExpiresAt)) {
 			if strings.TrimSpace(as.RefreshToken) == "" {
 				errOut := errors.New("authorization expired, please login again")
-				_ = s.updateRuntimeDir(curatedDir, opts.ManifestID, normalizeRuntimeError(errOut))
+				_ = s.updateRuntimeCheck(curatedDir, opts.ManifestID, normalizeRuntimeError(errOut))
 				return errOut
 			}
 			ref, err := c.Refresh(ctx, api.RefreshRequest{
@@ -506,18 +528,18 @@ func (s *Service) updateFromRemote(ctx context.Context, curatedDir string, opts 
 			if err != nil {
 				if attempt == 0 && license != "" && isInvalidRefreshTokenMessage(err.Error()) {
 					if loginErr := s.Login(ctx, license); loginErr != nil {
-						_ = s.updateRuntimeDir(curatedDir, opts.ManifestID, normalizeRuntimeError(loginErr))
+						_ = s.updateRuntimeCheck(curatedDir, opts.ManifestID, normalizeRuntimeError(loginErr))
 						return loginErr
 					}
 					as, err = readAuth(authPath)
 					if err != nil || as == nil {
 						errOut := errors.New("not logged in")
-						_ = s.updateRuntimeDir(curatedDir, opts.ManifestID, normalizeRuntimeError(errOut))
+						_ = s.updateRuntimeCheck(curatedDir, opts.ManifestID, normalizeRuntimeError(errOut))
 						return errOut
 					}
 					continue
 				}
-				_ = s.updateRuntimeDir(curatedDir, opts.ManifestID, normalizeRuntimeError(err))
+				_ = s.updateRuntimeCheck(curatedDir, opts.ManifestID, normalizeRuntimeError(err))
 				return err
 			}
 			as.AccessToken = ref.AccessToken
@@ -539,7 +561,7 @@ func (s *Service) updateFromRemote(ctx context.Context, curatedDir string, opts 
 			AfrogVersion: "",
 		})
 		if err != nil {
-			_ = s.updateRuntimeDir(curatedDir, opts.ManifestID, normalizeRuntimeError(err))
+			_ = s.updateRuntimeCheck(curatedDir, opts.ManifestID, normalizeRuntimeError(err))
 			return err
 		}
 		manResp = resp
@@ -547,7 +569,7 @@ func (s *Service) updateFromRemote(ctx context.Context, curatedDir string, opts 
 	}
 	man, err := manifest.ParseAndVerify(manResp.ManifestJSONB64, manResp.ManifestSigB64)
 	if err != nil {
-		_ = s.updateRuntimeDir(curatedDir, opts.ManifestID, normalizeRuntimeError(err))
+		_ = s.updateRuntimeCheck(curatedDir, opts.ManifestID, normalizeRuntimeError(err))
 		return err
 	}
 
@@ -557,14 +579,14 @@ func (s *Service) updateFromRemote(ctx context.Context, curatedDir string, opts 
 		currentManifest = rs.ManifestID
 	}
 	if !opts.Force && currentManifest != "" && currentManifest == man.ManifestID {
-		_ = s.updateRuntimeDir(curatedDir, man.ManifestID, "")
+		_ = s.updateRuntimeCheck(curatedDir, man.ManifestID, "")
 		return nil
 	}
 
 	artifact, ok := man.SelectBestArtifact(currentManifest)
 	if !ok {
 		err := errors.New("no artifact available")
-		_ = s.updateRuntimeDir(curatedDir, man.ManifestID, normalizeRuntimeError(err))
+		_ = s.updateRuntimeCheck(curatedDir, man.ManifestID, normalizeRuntimeError(err))
 		return err
 	}
 
@@ -574,7 +596,7 @@ func (s *Service) updateFromRemote(ctx context.Context, curatedDir string, opts 
 		DeviceFingerprint:  as.DeviceFingerprint,
 	})
 	if err != nil {
-		_ = s.updateRuntimeDir(curatedDir, man.ManifestID, normalizeRuntimeError(err))
+		_ = s.updateRuntimeCheck(curatedDir, man.ManifestID, normalizeRuntimeError(err))
 		return err
 	}
 
@@ -584,7 +606,7 @@ func (s *Service) updateFromRemote(ctx context.Context, curatedDir string, opts 
 	}
 	tmpFile := filepath.Join(cacheDir, fmt.Sprintf("download-%d.afcp", time.Now().UnixNano()))
 	if err := api.DownloadToFile(ctx, authz.DownloadURL, tmpFile); err != nil {
-		_ = s.updateRuntimeDir(curatedDir, man.ManifestID, normalizeRuntimeError(err))
+		_ = s.updateRuntimeCheck(curatedDir, man.ManifestID, normalizeRuntimeError(err))
 		return err
 	}
 
@@ -594,7 +616,6 @@ func (s *Service) updateFromRemote(ctx context.Context, curatedDir string, opts 
 		ManifestID:    man.ManifestID,
 	}
 	if err := s.installAFCP(curatedDir, installOpts); err != nil {
-		_ = s.updateRuntimeDir(curatedDir, man.ManifestID, normalizeRuntimeError(err))
 		return err
 	}
 	_ = os.Remove(tmpFile)
