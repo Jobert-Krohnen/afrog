@@ -346,6 +346,7 @@ func (r *Runner) LiveStatsSuffix() string {
 		reqWaitMsPerSec,
 		reqWaitPerSec,
 	)
+	suffix += fmt.Sprintf(" q=%d", atomic.LoadInt64(&r.engine.queuedTasks))
 	r.oobPendingMu.Lock()
 	oobPending := len(r.oobPending)
 	r.oobPendingMu.Unlock()
@@ -355,6 +356,29 @@ func (r *Runner) LiveStatsSuffix() string {
 		} else {
 			suffix += fmt.Sprintf(" oob=%d", oobPending)
 		}
+	}
+	if pedm := r.PedmStatusSuffix(); pedm != "" {
+		suffix += pedm
+	}
+	return suffix
+}
+
+func (r *Runner) PedmStatusSuffix() string {
+	if r == nil || r.engine == nil || r.options == nil || !r.options.PocExecutionDurationMonitor {
+		return ""
+	}
+
+	snap := r.engine.pedmSnapshot(r.options)
+	if snap.Active == 0 && snap.Queued == 0 {
+		return ""
+	}
+
+	suffix := fmt.Sprintf(" run=%d q=%d", snap.Active, snap.Queued)
+	if snap.Slow > 0 {
+		suffix += fmt.Sprintf(" slow=%d", snap.Slow)
+	}
+	if snap.Longest > 0 {
+		suffix += fmt.Sprintf(" longest=%s", snap.Longest.Truncate(time.Second).String())
 	}
 	return suffix
 }

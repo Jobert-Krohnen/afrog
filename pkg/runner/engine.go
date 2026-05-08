@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -487,10 +488,16 @@ type Engine struct {
 	stopped       uint32
 	quit          chan struct{}
 	activeTasks   int64
+	queuedTasks   int64
 	startedTasks  uint32
 	slowLogged    uint32
 	pedmMu        sync.Mutex
 	pedmStatsByID map[string]*pedmStat
+	pedmPairByID  map[string]*pedmStat
+	pedmActiveMu  sync.Mutex
+	pedmActive    map[uint64]*pedmActiveTask
+	pedmTaskSeq   uint64
+	pedmStop      chan struct{}
 	oobAdapter    *oobadapter.OOBAdapter
 	oobAlive      bool
 	oobMgr        *OOBManager
@@ -501,6 +508,8 @@ func NewEngine(options *config.Options) *Engine {
 		options:       options,
 		quit:          make(chan struct{}),
 		pedmStatsByID: make(map[string]*pedmStat),
+		pedmPairByID:  make(map[string]*pedmStat),
+		pedmActive:    make(map[uint64]*pedmActiveTask),
 	}
 	return engine
 }
@@ -513,18 +522,42 @@ type pedmStat struct {
 }
 
 type pedmEntry struct {
-	id    string
-	count uint64
-	total time.Duration
-	max   time.Duration
+	id     string
+	target string
+	pocID  string
+	count  uint64
+	total  time.Duration
+	max    time.Duration
+}
+
+type pedmActiveTask struct {
+	stage     string
+	pocID     string
+	target    string
+	startedAt time.Time
+	nextLogAt time.Time
+}
+
+type pedmActiveSnapshot struct {
+	Active  int
+	Queued  int
+	Slow    int
+	Longest time.Duration
+	PocID   string
+	Target  string
 }
 
 func (e *Engine) pedmReset() {
 	atomic.StoreUint32(&e.startedTasks, 0)
 	atomic.StoreUint32(&e.slowLogged, 0)
+	e.pedmStopMonitor()
 	e.pedmMu.Lock()
 	e.pedmStatsByID = make(map[string]*pedmStat)
+	e.pedmPairByID = make(map[string]*pedmStat)
 	e.pedmMu.Unlock()
+	e.pedmActiveMu.Lock()
+	e.pedmActive = make(map[uint64]*pedmActiveTask)
+	e.pedmActiveMu.Unlock()
 }
 
 func (e *Engine) pedmRecord(pocID string, dur time.Duration) {
@@ -537,13 +570,41 @@ func (e *Engine) pedmRecord(pocID string, dur time.Duration) {
 	}
 
 	e.pedmMu.Lock()
-	s := e.pedmStatsByID[pocID]
-	if s == nil {
-		s = &pedmStat{}
-		e.pedmStatsByID[pocID] = s
-	}
+	s := e.pedmEnsureStat(e.pedmStatsByID, pocID)
 	e.pedmMu.Unlock()
 
+	e.pedmApplyDuration(s, dur)
+}
+
+func (e *Engine) pedmRecordPair(target, pocID string, dur time.Duration) {
+	if e == nil {
+		return
+	}
+	key := pedmPairKey(target, pocID)
+	if key == "" {
+		return
+	}
+
+	e.pedmMu.Lock()
+	s := e.pedmEnsureStat(e.pedmPairByID, key)
+	e.pedmMu.Unlock()
+
+	e.pedmApplyDuration(s, dur)
+}
+
+func (e *Engine) pedmEnsureStat(store map[string]*pedmStat, key string) *pedmStat {
+	s := store[key]
+	if s == nil {
+		s = &pedmStat{}
+		store[key] = s
+	}
+	return s
+}
+
+func (e *Engine) pedmApplyDuration(s *pedmStat, dur time.Duration) {
+	if s == nil {
+		return
+	}
 	s.mu.Lock()
 	s.count++
 	s.total += dur
@@ -570,7 +631,7 @@ func (e *Engine) pedmMaybeLogSlow(options *config.Options, stage, pocID, target 
 	if atomic.AddUint32(&e.slowLogged, 1) > uint32(options.PedmSlowLogLimit) {
 		return
 	}
-	gologger.Info().Msg(log.LogColor.Time(fmt.Sprintf("POC-DURATION | %s | %s | %s | %s", stage, pocID, target, dur.String())))
+	e.pedmLog(options, fmt.Sprintf("PEDM-SLOW | completed | stage=%s dur=%s poc=%s target=%s", stage, dur.String(), pocID, target))
 }
 
 func (e *Engine) pedmSummary(options *config.Options) {
@@ -582,8 +643,33 @@ func (e *Engine) pedmSummary(options *config.Options) {
 	}
 
 	e.pedmMu.Lock()
-	entries := make([]pedmEntry, 0, len(e.pedmStatsByID))
-	for id, s := range e.pedmStatsByID {
+	entries := e.pedmCollectEntries(e.pedmStatsByID, false)
+	pairEntries := e.pedmCollectEntries(e.pedmPairByID, true)
+	e.pedmMu.Unlock()
+
+	if len(entries) == 0 && len(pairEntries) == 0 {
+		return
+	}
+
+	by := strings.ToLower(strings.TrimSpace(options.PedmSummaryBy))
+	if by != "avg" && by != "max" {
+		by = "max"
+	}
+
+	top := options.PedmSummaryTop
+	if len(entries) > 0 {
+		e.pedmSortEntries(entries, by)
+		e.pedmPrintSummary("poc", top, by, entries)
+	}
+	if len(pairEntries) > 0 {
+		e.pedmSortEntries(pairEntries, by)
+		e.pedmPrintSummary("target+poc", top, by, pairEntries)
+	}
+}
+
+func (e *Engine) pedmCollectEntries(store map[string]*pedmStat, splitPair bool) []pedmEntry {
+	entries := make([]pedmEntry, 0, len(store))
+	for id, s := range store {
 		if s == nil {
 			continue
 		}
@@ -595,46 +681,227 @@ func (e *Engine) pedmSummary(options *config.Options) {
 		if c == 0 {
 			continue
 		}
-		entries = append(entries, pedmEntry{id: id, count: c, total: t, max: m})
+		entry := pedmEntry{id: id, count: c, total: t, max: m}
+		if splitPair {
+			entry.target, entry.pocID = pedmSplitPairKey(id)
+		} else {
+			entry.pocID = id
+		}
+		entries = append(entries, entry)
 	}
-	e.pedmMu.Unlock()
+	return entries
+}
 
+func (e *Engine) pedmSortEntries(entries []pedmEntry, by string) {
+	sort.Slice(entries, func(i, j int) bool {
+		a, b := entries[i], entries[j]
+		ai := e.pedmMetric(a, by)
+		aj := e.pedmMetric(b, by)
+		if ai != aj {
+			return ai > aj
+		}
+		if a.pocID != b.pocID {
+			return a.pocID < b.pocID
+		}
+		return a.target < b.target
+	})
+}
+
+func (e *Engine) pedmMetric(entry pedmEntry, by string) time.Duration {
+	if by == "avg" && entry.count > 0 {
+		return entry.total / time.Duration(entry.count)
+	}
+	return entry.max
+}
+
+func (e *Engine) pedmPrintSummary(scope string, top int, by string, entries []pedmEntry) {
 	if len(entries) == 0 {
 		return
 	}
-
-	by := strings.ToLower(strings.TrimSpace(options.PedmSummaryBy))
-	if by != "avg" && by != "max" {
-		by = "max"
-	}
-
-	sort.Slice(entries, func(i, j int) bool {
-		a, b := entries[i], entries[j]
-		if by == "avg" {
-			ai := a.total / time.Duration(a.count)
-			aj := b.total / time.Duration(b.count)
-			if ai != aj {
-				return ai > aj
-			}
-		} else {
-			if a.max != b.max {
-				return a.max > b.max
-			}
-		}
-		return a.id < b.id
-	})
-
-	top := options.PedmSummaryTop
 	if top > len(entries) {
 		top = len(entries)
 	}
+	if top <= 0 {
+		return
+	}
 
-	gologger.Info().Msg(log.LogColor.Time(fmt.Sprintf("PEDM-SUMMARY | by=%s top=%d", by, top)))
+	e.pedmLog(e.options, fmt.Sprintf("PEDM-SUMMARY | scope=%s by=%s top=%d", scope, by, top))
 	for i := 0; i < top; i++ {
 		it := entries[i]
 		avg := it.total / time.Duration(it.count)
-		gologger.Info().Msg(log.LogColor.Time(fmt.Sprintf("PEDM #%d | %s | count=%d avg=%s max=%s", i+1, it.id, it.count, avg.String(), it.max.String())))
+		if scope == "target+poc" {
+			e.pedmLog(e.options, fmt.Sprintf("PEDM #%d | target=%s | poc=%s | count=%d avg=%s max=%s", i+1, it.target, it.pocID, it.count, avg.String(), it.max.String()))
+			continue
+		}
+		e.pedmLog(e.options, fmt.Sprintf("PEDM #%d | poc=%s | count=%d avg=%s max=%s", i+1, it.pocID, it.count, avg.String(), it.max.String()))
 	}
+}
+
+func (e *Engine) pedmLog(options *config.Options, line string) {
+	if strings.TrimSpace(line) == "" {
+		return
+	}
+	if options != nil && options.OnPedmLog != nil {
+		options.OnPedmLog(line)
+		return
+	}
+	gologger.Info().Msg(log.LogColor.Time(line))
+}
+
+func pedmPairKey(target, pocID string) string {
+	target = strings.TrimSpace(target)
+	pocID = strings.TrimSpace(pocID)
+	if target == "" || pocID == "" {
+		return ""
+	}
+	return target + "\x00" + pocID
+}
+
+func pedmSplitPairKey(v string) (string, string) {
+	parts := strings.SplitN(v, "\x00", 2)
+	if len(parts) != 2 {
+		return "", strings.TrimSpace(v)
+	}
+	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+}
+
+func (e *Engine) pedmStartMonitor(options *config.Options) {
+	if e == nil || options == nil || !options.PocExecutionDurationMonitor || options.PedmSlowThresholdSec <= 0 {
+		return
+	}
+
+	stop := make(chan struct{})
+	e.pedmActiveMu.Lock()
+	if e.pedmStop != nil {
+		close(e.pedmStop)
+	}
+	e.pedmStop = stop
+	e.pedmActiveMu.Unlock()
+
+	threshold := time.Duration(options.PedmSlowThresholdSec) * time.Second
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+			}
+
+			now := time.Now()
+			logs := make([]string, 0)
+
+			e.pedmActiveMu.Lock()
+			activeCount := len(e.pedmActive)
+			for _, task := range e.pedmActive {
+				if task == nil || task.startedAt.IsZero() {
+					continue
+				}
+				elapsed := now.Sub(task.startedAt)
+				if elapsed < threshold {
+					continue
+				}
+				if !task.nextLogAt.IsZero() && now.Before(task.nextLogAt) {
+					continue
+				}
+				task.nextLogAt = now.Add(1 * time.Minute)
+				logs = append(logs, fmt.Sprintf("PEDM-SLOW | running | stage=%s dur=%s active=%d poc=%s target=%s", task.stage, elapsed.Truncate(time.Second).String(), activeCount, task.pocID, task.target))
+			}
+			e.pedmActiveMu.Unlock()
+
+			for _, line := range logs {
+				e.pedmLog(options, line)
+			}
+		}
+	}()
+}
+
+func (e *Engine) pedmStopMonitor() {
+	if e == nil {
+		return
+	}
+	e.pedmActiveMu.Lock()
+	stop := e.pedmStop
+	e.pedmStop = nil
+	e.pedmActiveMu.Unlock()
+	if stop != nil {
+		close(stop)
+	}
+}
+
+func (e *Engine) pedmStartTask(stage, pocID, target string) uint64 {
+	if e == nil {
+		return 0
+	}
+	taskID := atomic.AddUint64(&e.pedmTaskSeq, 1)
+	e.pedmActiveMu.Lock()
+	e.pedmActive[taskID] = &pedmActiveTask{
+		stage:     strings.TrimSpace(stage),
+		pocID:     strings.TrimSpace(pocID),
+		target:    strings.TrimSpace(target),
+		startedAt: time.Now(),
+	}
+	e.pedmActiveMu.Unlock()
+	return taskID
+}
+
+func (e *Engine) pedmDoneTask(taskID uint64) {
+	if e == nil || taskID == 0 {
+		return
+	}
+	e.pedmActiveMu.Lock()
+	delete(e.pedmActive, taskID)
+	e.pedmActiveMu.Unlock()
+}
+
+func (e *Engine) pedmSnapshot(options *config.Options) pedmActiveSnapshot {
+	if e == nil {
+		return pedmActiveSnapshot{}
+	}
+	threshold := time.Duration(0)
+	if options != nil && options.PedmSlowThresholdSec > 0 {
+		threshold = time.Duration(options.PedmSlowThresholdSec) * time.Second
+	}
+
+	now := time.Now()
+	snap := pedmActiveSnapshot{}
+	snap.Queued = int(atomic.LoadInt64(&e.queuedTasks))
+	e.pedmActiveMu.Lock()
+	snap.Active = len(e.pedmActive)
+	for _, task := range e.pedmActive {
+		if task == nil || task.startedAt.IsZero() {
+			continue
+		}
+		elapsed := now.Sub(task.startedAt)
+		if threshold > 0 && elapsed >= threshold {
+			snap.Slow++
+		}
+		if elapsed > snap.Longest {
+			snap.Longest = elapsed
+			snap.PocID = task.pocID
+			snap.Target = task.target
+		}
+	}
+	e.pedmActiveMu.Unlock()
+	return snap
+}
+
+func (e *Engine) taskHardTimeout() time.Duration {
+	if e == nil || e.options == nil || e.options.TaskHardTimeoutSec <= 0 {
+		return 0
+	}
+	return time.Duration(e.options.TaskHardTimeoutSec) * time.Second
+}
+
+func (e *Engine) taskTimeoutLog(stage, pocID, target string, dur, limit time.Duration) {
+	if e == nil {
+		return
+	}
+	if dur <= 0 {
+		dur = limit
+	}
+	e.pedmLog(e.options, fmt.Sprintf("TASK-TIMEOUT | stage=%s elapsed=%s limit=%s poc=%s target=%s", stage, dur.Truncate(time.Second).String(), limit.String(), pocID, target))
 }
 
 func (runner *Runner) Execute() {
@@ -642,6 +909,10 @@ func (runner *Runner) Execute() {
 	options := runner.options
 	if runner.engine != nil {
 		runner.engine.pedmReset()
+		defer runner.engine.pedmStopMonitor()
+		if options.PocExecutionDurationMonitor {
+			runner.engine.pedmStartMonitor(options)
+		}
 	}
 	if runner.engine != nil {
 		runner.engine.oobAdapter = nil
@@ -1221,6 +1492,7 @@ func (runner *Runner) Execute() {
 						if !ok {
 							return
 						}
+						atomic.AddInt64(&runner.engine.queuedTasks, -1)
 						runner.engine.waitTick()
 						if atomic.LoadUint32(&runner.engine.stopped) != 0 || runner.options.VulnerabilityScannerBreakpoint {
 							finish(task.pocID)
@@ -1286,6 +1558,7 @@ func (runner *Runner) Execute() {
 				case <-runner.ctx.Done():
 					finish(task.pocID)
 				case tasks <- task:
+					atomic.AddInt64(&runner.engine.queuedTasks, 1)
 				}
 			}
 			if scheduled == 0 {
@@ -1295,6 +1568,7 @@ func (runner *Runner) Execute() {
 
 		close(tasks)
 		workers.Wait()
+		atomic.StoreInt64(&runner.engine.queuedTasks, 0)
 	}
 
 	oobRate := options.OOBRateLimit
@@ -1364,45 +1638,46 @@ func (runner *Runner) exec(tap *TransData) {
 			}
 			n := atomic.AddUint32(&runner.engine.startedTasks, 1)
 			if limit > 0 && n <= uint32(limit) {
-				gologger.Info().Msg(log.LogColor.Time(fmt.Sprintf("POC-TASK #%d | VULN | %s | %s", n, tap.Poc.Id, tap.Target)))
+				runner.engine.pedmLog(options, fmt.Sprintf("POC-TASK #%d | VULN | %s | %s", n, tap.Poc.Id, tap.Target))
 			}
+
+			taskID := runner.engine.pedmStartTask("VULN", tap.Poc.Id, tap.Target)
+			defer runner.engine.pedmDoneTask(taskID)
+
+			taskCtx := baseCtx
+			cancel := func() {}
+			hardTimeout := runner.engine.taskHardTimeout()
+			if hardTimeout > 0 {
+				taskCtx, cancel = context.WithTimeout(baseCtx, hardTimeout)
+			}
+			defer cancel()
 
 			start := time.Now()
-			done := make(chan struct{})
-			go func() {
-				runner.executeExpression(baseCtx, tap.Target, &tap.Poc)
-				close(done)
-			}()
-
-			select {
-			case <-done:
-				dur := time.Since(start)
-				runner.engine.pedmRecord(tap.Poc.Id, dur)
-				runner.engine.pedmMaybeLogSlow(options, "VULN", tap.Poc.Id, tap.Target, dur)
-				return
-			case <-baseCtx.Done():
-				return
-			case <-time.After(1 * time.Minute):
-				gologger.Info().Msg(log.LogColor.Time(fmt.Sprintf("The PoC for [%s] on [%s] has been running for over [%d] minute.", tap.Target, tap.Poc.Id, 1)))
-				var num = 1
-				for {
-					select {
-					case <-done:
-						dur := time.Since(start)
-						runner.engine.pedmRecord(tap.Poc.Id, dur)
-						runner.engine.pedmMaybeLogSlow(options, "VULN", tap.Poc.Id, tap.Target, dur)
-						gologger.Info().Msg(log.LogColor.Time(fmt.Sprintf("The PoC for [%s] on [%s] has completed execution, taking over [%d] minute.", tap.Target, tap.Poc.Id, num)))
-						return
-					case <-baseCtx.Done():
-						return
-					case <-time.After(1 * time.Minute):
-						num++
-						gologger.Info().Msg(log.LogColor.Time(fmt.Sprintf("The PoC for [%s] on [%s] has been running for over [%d] minute.", tap.Target, tap.Poc.Id, num)))
-					}
-				}
+			runner.executeExpression(taskCtx, tap.Target, &tap.Poc)
+			dur := time.Since(start)
+			runner.engine.pedmRecord(tap.Poc.Id, dur)
+			runner.engine.pedmRecordPair(tap.Target, tap.Poc.Id, dur)
+			runner.engine.pedmMaybeLogSlow(options, "VULN", tap.Poc.Id, tap.Target, dur)
+			if hardTimeout > 0 && errors.Is(taskCtx.Err(), context.DeadlineExceeded) {
+				runner.engine.taskTimeoutLog("VULN", tap.Poc.Id, tap.Target, dur, hardTimeout)
 			}
+			return
 		} else {
-			runner.executeExpression(baseCtx, tap.Target, &tap.Poc)
+			taskCtx := baseCtx
+			cancel := func() {}
+			hardTimeout := runner.engine.taskHardTimeout()
+			if hardTimeout > 0 {
+				taskCtx, cancel = context.WithTimeout(baseCtx, hardTimeout)
+			}
+			defer cancel()
+			start := time.Time{}
+			if hardTimeout > 0 {
+				start = time.Now()
+			}
+			runner.executeExpression(taskCtx, tap.Target, &tap.Poc)
+			if hardTimeout > 0 && errors.Is(taskCtx.Err(), context.DeadlineExceeded) {
+				runner.engine.taskTimeoutLog("VULN", tap.Poc.Id, tap.Target, time.Since(start), hardTimeout)
+			}
 		}
 	}
 }
@@ -1468,19 +1743,37 @@ func (e runnerFingerprintExecutor) Exec(ctx context.Context, target string, p *p
 		defer e.runner.ScanProgress.IncrementTask(fpID, target)
 	}
 
-	if ctx != nil {
-		c.VariableMap[retryhttpclient.ContextVarKey] = ctx
-	}
-
 	var start time.Time
+	var taskID uint64
+	taskCtx := ctx
+	cancel := func() {}
+	hardTimeout := e.runner.engine.taskHardTimeout()
+	if taskCtx == nil {
+		taskCtx = context.Background()
+	}
+	if hardTimeout > 0 {
+		taskCtx, cancel = context.WithTimeout(taskCtx, hardTimeout)
+	}
+	defer cancel()
 	if e.runner.options != nil && e.runner.options.PocExecutionDurationMonitor {
+		taskID = e.runner.engine.pedmStartTask("FINGER", p.Id, target)
+		defer e.runner.engine.pedmDoneTask(taskID)
+		start = time.Now()
+	} else if hardTimeout > 0 {
 		start = time.Now()
 	}
+	c.VariableMap[retryhttpclient.ContextVarKey] = taskCtx
 	err = c.Check(target, p)
 	if !start.IsZero() {
 		dur := time.Since(start)
-		e.runner.engine.pedmRecord(p.Id, dur)
-		e.runner.engine.pedmMaybeLogSlow(e.runner.options, "FINGER", p.Id, target, dur)
+		if e.runner.options != nil && e.runner.options.PocExecutionDurationMonitor {
+			e.runner.engine.pedmRecord(p.Id, dur)
+			e.runner.engine.pedmRecordPair(target, p.Id, dur)
+			e.runner.engine.pedmMaybeLogSlow(e.runner.options, "FINGER", p.Id, target, dur)
+		}
+		if hardTimeout > 0 && errors.Is(taskCtx.Err(), context.DeadlineExceeded) {
+			e.runner.engine.taskTimeoutLog("FINGER", p.Id, target, dur, hardTimeout)
+		}
 	}
 	if c.Result == nil {
 		return false, "", err

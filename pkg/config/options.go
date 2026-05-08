@@ -104,6 +104,7 @@ type Options struct {
 	PedmSlowLogLimit            int
 	PedmSummaryTop              int
 	PedmSummaryBy               string
+	TaskHardTimeoutSec          int
 
 	// Single Vulnerability Stopper
 	VulnerabilityScannerBreakpoint bool
@@ -230,6 +231,7 @@ type Options struct {
 	OnHostDiscovered func(host string)
 	OnPhaseProgress  func(phase string, status string, finished int64, total int64, percent int)
 	OnScanInfoUpdate func(info ScanInfoUpdate)
+	OnPedmLog        func(line string)
 
 	// path to the afrog configuration file
 	ConfigFile string
@@ -337,6 +339,16 @@ func NewOptions() (*Options, error) {
 		flagSet.BoolVarP(&options.NoColor, "no-color", "nc", false, "disable output content coloring (ANSI escape codes)"),
 		flagSet.BoolVar(&options.Silent, "silent", false, "only results only"),
 		flagSet.BoolVar(&options.LiveStats, "live-stats", false, "render live stats in a single-line status display"),
+	)
+
+	flagSet.CreateGroup("pedm", "PEDM",
+		flagSet.BoolVar(&options.PocExecutionDurationMonitor, "pedm", false, "enable PoC Execution Duration Monitor (PEDM)"),
+		flagSet.IntVar(&options.PedmLogLimit, "pedm-log-limit", 0, "print the first N started PoC tasks, 0 disables"),
+		flagSet.IntVar(&options.PedmSlowThresholdSec, "pedm-slow-sec", 30, "print running/completed slow PoC tasks at or above this threshold in seconds, 0 disables"),
+		flagSet.IntVar(&options.PedmSlowLogLimit, "pedm-slow-log-limit", 20, "maximum completed slow-task logs to print, 0 disables completed slow-task logs"),
+		flagSet.IntVar(&options.PedmSummaryTop, "pedm-summary-top", 10, "print top N slowest PoCs and target+PoC pairs when scan ends, 0 disables summary"),
+		flagSet.StringVar(&options.PedmSummaryBy, "pedm-summary-by", "max", "PEDM summary sort key: max|avg"),
+		flagSet.IntVar(&options.TaskHardTimeoutSec, "task-hard-timeout-sec", 0, "hard timeout for one target+PoC task in seconds, 0 disables"),
 	)
 
 	flagSet.CreateGroup("debug", "Debug & Tools",
@@ -482,6 +494,9 @@ func (opt *Options) VerifyOptions() error {
 	}
 	if opt.PedmSummaryTop < 0 {
 		return fmt.Errorf("--pedm-summary-top must be >= 0")
+	}
+	if opt.TaskHardTimeoutSec < 0 {
+		return fmt.Errorf("--task-hard-timeout-sec must be >= 0")
 	}
 	if opt.OOBFinalizeTimeout < -1 {
 		return fmt.Errorf("--oob-finalize-timeout must be >= -1")

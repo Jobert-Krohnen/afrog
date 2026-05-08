@@ -158,6 +158,9 @@ func main() {
 
 	progressLine := func() string {
 		total := options.Count
+		if total <= 0 {
+			return ""
+		}
 		current := atomic.LoadUint32(&options.CurrentCount)
 		pgress := 0
 		if total > 0 {
@@ -169,6 +172,9 @@ func main() {
 		if options.LiveStats {
 			suffix = r.LiveStatsSuffix()
 		} else {
+			if pedm := r.PedmStatusSuffix(); pedm != "" {
+				suffix += pedm
+			}
 			if v, ok := oobFinalize.Load().(oobFinalizeProgress); ok && strings.TrimSpace(v.Status) != "" {
 				remain := v.Total - v.Finished
 				if remain < 0 {
@@ -185,13 +191,43 @@ func main() {
 
 	renderProgress := func() {
 		line := progressLine()
+		if line == "" {
+			return
+		}
 		fmt.Fprint(os.Stderr, "\r\033[2K")
 		fmt.Fprintf(os.Stderr, "\r%s", line)
 	}
 
+	printProgressAwareLog := func(line string) {
+		lock.Lock()
+		defer lock.Unlock()
+		if progressEnabled && progressLine() != "" {
+			fmt.Fprint(os.Stderr, "\r\033[2K\r")
+		}
+		gologger.Info().Msg(line)
+		if progressEnabled && !options.LiveStats {
+			renderProgress()
+		}
+	}
+
 	var progressDone chan struct{}
-	var progressOnce sync.Once
 	if progressEnabled {
+		progressDone = make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(1 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-progressDone:
+					return
+				case <-ticker.C:
+					lock.Lock()
+					renderProgress()
+					lock.Unlock()
+				}
+			}
+		}()
+
 		prev := options.OnPhaseProgress
 		options.OnPhaseProgress = func(phase string, status string, finished int64, total int64, percent int) {
 			if prev != nil {
@@ -225,6 +261,10 @@ func main() {
 			renderProgress()
 			lock.Unlock()
 		}
+	}
+
+	options.OnPedmLog = func(line string) {
+		printProgressAwareLog(line)
 	}
 
 	r.OnFingerprint = func(targetKey string, hits []fingerprint.Hit) {
@@ -324,29 +364,6 @@ func main() {
 				gologger.Error().Msgf("OnResult panic: %v", err)
 			}
 		}()
-
-		if options.LiveStats && progressEnabled {
-			progressOnce.Do(func() {
-				progressDone = make(chan struct{})
-				lock.Lock()
-				renderProgress()
-				lock.Unlock()
-				go func() {
-					ticker := time.NewTicker(1 * time.Second)
-					defer ticker.Stop()
-					for {
-						select {
-						case <-progressDone:
-							return
-						case <-ticker.C:
-							lock.Lock()
-							renderProgress()
-							lock.Unlock()
-						}
-					}
-				}()
-			})
-		}
 
 		defer func() {
 			if result == nil || !result.SkipCount {
