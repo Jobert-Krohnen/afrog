@@ -105,6 +105,10 @@ type Options struct {
 	PedmSummaryTop              int
 	PedmSummaryBy               string
 	TaskHardTimeoutSec          int
+	TaskSmartTimeout            bool
+	TaskTimeoutVisibleCapSec    int
+	TaskTimeoutNetCapSec        int
+	TaskTimeoutGoCapSec         int
 
 	// Single Vulnerability Stopper
 	VulnerabilityScannerBreakpoint bool
@@ -349,6 +353,10 @@ func NewOptions() (*Options, error) {
 		flagSet.IntVar(&options.PedmSummaryTop, "pedm-summary-top", 10, "print top N slowest PoCs and target+PoC pairs when scan ends, 0 disables summary"),
 		flagSet.StringVar(&options.PedmSummaryBy, "pedm-summary-by", "max", "PEDM summary sort key: max|avg"),
 		flagSet.IntVar(&options.TaskHardTimeoutSec, "task-hard-timeout-sec", 0, "hard timeout for one target+PoC task in seconds, 0 disables"),
+		flagSet.BoolVar(&options.TaskSmartTimeout, "task-smart-timeout", false, "estimate per-PoC task timeout from PoC content and use it as the primary hard timeout"),
+		flagSet.IntVar(&options.TaskTimeoutVisibleCapSec, "task-timeout-visible-cap-sec", 300, "maximum smart timeout for regular HTTP PoCs"),
+		flagSet.IntVar(&options.TaskTimeoutNetCapSec, "task-timeout-net-cap-sec", 360, "maximum smart timeout for tcp/udp/ssl PoCs"),
+		flagSet.IntVar(&options.TaskTimeoutGoCapSec, "task-timeout-go-cap-sec", 420, "maximum smart timeout for go PoCs"),
 	)
 
 	flagSet.CreateGroup("debug", "Debug & Tools",
@@ -497,6 +505,15 @@ func (opt *Options) VerifyOptions() error {
 	}
 	if opt.TaskHardTimeoutSec < 0 {
 		return fmt.Errorf("--task-hard-timeout-sec must be >= 0")
+	}
+	if opt.TaskTimeoutVisibleCapSec <= 0 {
+		return fmt.Errorf("--task-timeout-visible-cap-sec must be > 0")
+	}
+	if opt.TaskTimeoutNetCapSec <= 0 {
+		return fmt.Errorf("--task-timeout-net-cap-sec must be > 0")
+	}
+	if opt.TaskTimeoutGoCapSec <= 0 {
+		return fmt.Errorf("--task-timeout-go-cap-sec must be > 0")
 	}
 	if opt.OOBFinalizeTimeout < -1 {
 		return fmt.Errorf("--oob-finalize-timeout must be >= -1")
@@ -1131,6 +1148,15 @@ func (o *Options) CreatePocList() []poc.Poc {
 		pp.Id = strings.TrimSpace(pp.Id)
 		if pp.Id == "" {
 			pp.Id = id
+		}
+		if o.TaskSmartTimeout {
+			estimate := poc.EstimateTaskTimeout(pp, poc.TaskTimeoutPolicy{
+				VisibleCapSec: o.TaskTimeoutVisibleCapSec,
+				NetCapSec:     o.TaskTimeoutNetCapSec,
+				GoCapSec:      o.TaskTimeoutGoCapSec,
+			})
+			pp.EstimatedTaskTimeoutSec = estimate.TimeoutSec
+			pp.EstimatedTaskTimeoutReason = estimate.Reason
 		}
 		newPocSlice = append(newPocSlice, pp)
 	}

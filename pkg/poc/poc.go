@@ -35,6 +35,9 @@ type Poc struct {
 	Info       Info          `yaml:"info"`
 	Gopoc      string        `yaml:"gopoc"` // Gopoc 脚本名称
 	Extractors []Extractors  `yaml:"extractors"`
+
+	EstimatedTaskTimeoutSec    int    `yaml:"-"`
+	EstimatedTaskTimeoutReason string `yaml:"-"`
 }
 
 // TODO REMARK

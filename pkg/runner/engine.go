@@ -887,11 +887,21 @@ func (e *Engine) pedmSnapshot(options *config.Options) pedmActiveSnapshot {
 	return snap
 }
 
-func (e *Engine) taskHardTimeout() time.Duration {
-	if e == nil || e.options == nil || e.options.TaskHardTimeoutSec <= 0 {
+func (e *Engine) taskHardTimeout(taskPoc *poc.Poc) time.Duration {
+	if e == nil || e.options == nil {
 		return 0
 	}
-	return time.Duration(e.options.TaskHardTimeoutSec) * time.Second
+	fixedFallbackSec := 0
+	if e.options.TaskHardTimeoutSec > 0 {
+		fixedFallbackSec = e.options.TaskHardTimeoutSec
+	}
+	if e.options.TaskSmartTimeout {
+		return poc.TaskTimeoutDuration(taskPoc, fixedFallbackSec)
+	}
+	if fixedFallbackSec <= 0 {
+		return 0
+	}
+	return time.Duration(fixedFallbackSec) * time.Second
 }
 
 func (e *Engine) taskTimeoutLog(stage, pocID, target string, dur, limit time.Duration) {
@@ -1646,7 +1656,7 @@ func (runner *Runner) exec(tap *TransData) {
 
 			taskCtx := baseCtx
 			cancel := func() {}
-			hardTimeout := runner.engine.taskHardTimeout()
+			hardTimeout := runner.engine.taskHardTimeout(&tap.Poc)
 			if hardTimeout > 0 {
 				taskCtx, cancel = context.WithTimeout(baseCtx, hardTimeout)
 			}
@@ -1665,7 +1675,7 @@ func (runner *Runner) exec(tap *TransData) {
 		} else {
 			taskCtx := baseCtx
 			cancel := func() {}
-			hardTimeout := runner.engine.taskHardTimeout()
+			hardTimeout := runner.engine.taskHardTimeout(&tap.Poc)
 			if hardTimeout > 0 {
 				taskCtx, cancel = context.WithTimeout(baseCtx, hardTimeout)
 			}
@@ -1747,7 +1757,7 @@ func (e runnerFingerprintExecutor) Exec(ctx context.Context, target string, p *p
 	var taskID uint64
 	taskCtx := ctx
 	cancel := func() {}
-	hardTimeout := e.runner.engine.taskHardTimeout()
+	hardTimeout := e.runner.engine.taskHardTimeout(p)
 	if taskCtx == nil {
 		taskCtx = context.Background()
 	}
