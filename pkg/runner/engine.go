@@ -905,7 +905,7 @@ func (e *Engine) taskHardTimeout(taskPoc *poc.Poc) time.Duration {
 }
 
 func (e *Engine) taskTimeoutLog(stage, pocID, target string, dur, limit time.Duration) {
-	if e == nil {
+	if e == nil || e.options == nil || !e.options.PocExecutionDurationMonitor {
 		return
 	}
 	if dur <= 0 {
